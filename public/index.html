@@ -23,24 +23,27 @@
             padding: 20px;
         }
 
-        /* Большая центральная кнопка */
+        /* Большая центральная кнопка (круглая) */
         .big-btn {
             background: linear-gradient(135deg, #ef4444 0%, #f97316 100%);
             color: white;
-            font-size: 2rem;
+            font-size: 1.8rem;
             font-weight: 800;
-            padding: 35px 50px;
+            width: 260px;
+            height: 260px;
             border: none;
-            border-radius: 60px;
+            border-radius: 50%;
             cursor: pointer;
             box-shadow: 0 15px 35px rgba(239, 68, 68, 0.4);
             transition: all 0.25s ease;
             text-align: center;
-            max-width: 90vw;
             user-select: none;
             display: flex;
+            flex-direction: column;
+            justify-content: center;
             align-items: center;
-            gap: 15px;
+            gap: 10px;
+            padding: 20px;
         }
 
         .big-btn:hover {
@@ -156,8 +159,9 @@
 
         @media (max-width: 600px) {
             .big-btn {
-                font-size: 1.4rem;
-                padding: 25px 30px;
+                width: 200px;
+                height: 200px;
+                font-size: 1.3rem;
             }
         }
     </style>
@@ -166,16 +170,17 @@
 
     <!-- Большая кнопка по центру -->
     <button class="big-btn" onclick="openModal()">
-        <span>🎯 Загадать задание блогеру</span>
+        <span style="font-size: 2.2rem; line-height: 1;">🎯</span>
+        <span>Дать задание</span>
     </button>
 
     <!-- Всплывающее окно -->
     <div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
         <div class="modal">
             <h2 class="modal-title">Твоя безумная идея 💡</h2>
-            <p class="modal-subtitle">Напиши задание или вызов, который блогер должен выполнить.</p>
+            <p class="modal-subtitle">Напиши задание или вызов, который thebreakhikita должен выполнить.</p>
             
-            <textarea id="taskInput" placeholder="Например: Попробуй провести следующий стрим без единого слова 'да' и 'нет'..." maxlength="2000"></textarea>
+            <textarea id="taskInput" placeholder="Например: Сделай сальто" maxlength="2000"></textarea>
             
             <div id="statusMsg" class="status-msg"></div>
 

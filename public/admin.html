@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админка — Задания</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='50' fill='%233b82f6'/></svg>">
+    <style>
+        :root {
+            --bg: #0f172a; --surface: #1e293b; --accent: #3b82f6; 
+            --danger: #ef4444; --text: #f8fafc; --text-muted: #94a3b8;
+            --border: #334155;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background: var(--bg); color: var(--text); padding: 30px 20px; }
+        .container { max-width: 900px; margin: 0 auto; }
+
+        /* Авторизация */
+        #loginScreen { position: fixed; inset: 0; background: var(--bg); display: flex; justify-content: center; align-items: center; z-index: 1000; }
+        .login-box { background: var(--surface); padding: 40px; border-radius: 16px; border: 1px solid var(--border); width: 320px; text-align: center; }
+        .login-box input { width: 100%; padding: 12px; margin: 20px 0; background: #0f172a; border: 1px solid var(--border); border-radius: 8px; color: white; }
+
+        /* Верхняя панель */
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .actions { display: flex; gap: 10px; }
+        
+        .btn { padding: 10px 18px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9em; }
+        .btn-primary { background: var(--accent); color: white; }
+        .btn-danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+        .btn-danger:hover { background: var(--danger); color: white; }
+
+        /* Карточки заданий */
+        .task-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.15);
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .task-text {
+            font-size: 1.1em;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            color: #f1f5f9;
+        }
+
+        .task-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85em;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            padding-top: 12px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .ip-badge {
+            background: #0f172a;
+            border: 1px solid #475569;
+            color: #38bdf8;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 1em;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .task-delete-btn {
+            background: transparent;
+            border: none;
+            color: var(--danger);
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+        .task-delete-btn:hover { text-decoration: underline; }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-muted);
+            padding: 60px 0;
+            font-size: 1.2em;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Экран логина -->
+    <div id="loginScreen">
+        <div class="login-box">
+            <h2>Вход для админа</h2>
+            <input type="password" id="loginPassword" placeholder="Пароль администратора">
+            <button class="btn btn-primary" style="width: 100%;" onclick="login()">Войти</button>
+        </div>
+    </div>
+
+    <!-- Основной дашборд -->
+    <div class="container" id="adminContainer" style="display: none;">
+        <header>
+            <div>
+                <h1>📥 Предложенные задания</h1>
+                <p style="color: var(--text-muted);">Всего заданий: <span id="tasksCount" style="color: var(--accent); font-weight: bold;">0</span></p>
+            </div>
+            <div class="actions">
+                <button class="btn btn-primary" onclick="loadTasks()">🔄 Обновить</button>
+                <button class="btn btn-danger" onclick="logout()">Выйти</button>
+            </div>
+        </header>
+
+        <div id="tasksList"></div>
+    </div>
+
+    <script>
+        let authToken = localStorage.getItem('adminTaskToken');
+
+        if (authToken) showAdmin();
+
+        async function login() {
+            const pass = document.getElementById('loginPassword').value;
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password: pass })
+            });
+
+            const data = await res.json();
+            if (data.token) {
+                authToken = data.token;
+                localStorage.setItem('adminTaskToken', authToken);
+                showAdmin();
+            } else {
+                alert('Неверный пароль!');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('adminTaskToken');
+            location.reload();
+        }
+
+        function showAdmin() {
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('adminContainer').style.display = 'block';
+            loadTasks();
+        }
+
+        async function loadTasks() {
+            try {
+                const res = await fetch('/api/tasks', {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (res.status === 401) {
+                    alert('Сессия истекла, войдите заново');
+                    return logout();
+                }
+
+                const tasks = await res.json();
+                renderTasks(tasks);
+            } catch (err) {
+                console.error(err);
+                alert('Ошибка загрузки заданий');
+            }
+        }
+
+        function renderTasks(tasks) {
+            document.getElementById('tasksCount').innerText = tasks.length;
+            const container = document.getElementById('tasksList');
+
+            if (!tasks.length) {
+                container.innerHTML = '<div class="empty-state">Пока никто ничего не отправил 😴</div>';
+                return;
+            }
+
+            container.innerHTML = tasks.map(task => {
+                const date = new Date(task.created_at).toLocaleString('ru-RU');
+                return `
+                <div class="task-card" id="task-${task.id}">
+                    <div class="task-text">${escapeHtml(task.text)}</div>
+                    <div class="task-meta">
+                        <div>
+                            <span>🌐 IP: </span>
+                            <span class="ip-badge" title="IP адрес отправителя">${escapeHtml(task.ip)}</span>
+                            <span style="margin-left: 10px;">🕒 ${date}</span>
+                        </div>
+                        <button class="task-delete-btn" onclick="deleteTask(${task.id})">Удалить ✕</button>
+                    </div>
+                </div>
+                `;
+            }).join('');
+        }
+
+        async function deleteTask(id) {
+            if (!confirm('Удалить это задание?')) return;
+
+            const res = await fetch(`/api/tasks/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+
+            if (res.ok) {
+                const el = document.getElementById(`task-${id}`);
+                if (el) el.remove();
+                const count = document.getElementById('tasksCount');
+                count.innerText = Math.max(0, parseInt(count.innerText) - 1);
+            } else {
+                alert('Ошибка при удалении');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.innerText = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

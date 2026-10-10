@@ -3,7 +3,10 @@ const { createClient } = require('@supabase/supabase-js');
 const crypto = require('crypto');
 
 const app = express();
-const authTokens = new Set();
+
+function generateAuthToken(password) {
+    return crypto.createHash('sha256').update(password + 'task_salt_secret').digest('hex');
+}
 
 // Включаем доверие прокси (для Render, Vercel, Railway, чтобы видеть реальный IP посетителя)
 app.set('trust proxy', true);
@@ -59,18 +62,18 @@ app.get('/api/public-tasks', async (req, res) => {
 // 2. Вход для админа
 app.post('/api/login', (req, res) => {
     if (req.body.password === ADMIN_PASSWORD) {
-        const token = crypto.randomBytes(16).toString('hex');
-        authTokens.add(token);
+        const token = generateAuthToken(ADMIN_PASSWORD);
         res.json({ success: true, token });
     } else {
         res.status(403).json({ error: 'Неверный пароль' });
     }
 });
 
-// Middleware проверки прав админа
+// Middleware проверки прав админа (токен сверяется без сброса памяти)
 function authMiddleware(req, res, next) {
     const token = req.headers.authorization?.split(' ')[1];
-    if (!token || !authTokens.has(token)) {
+    const validToken = generateAuthToken(ADMIN_PASSWORD);
+    if (!token || token !== validToken) {
         return res.status(401).json({ error: 'Не авторизован' });
     }
     next();

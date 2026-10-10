@@ -25,6 +25,8 @@
 
         /* Большая центральная кнопка (круглая) */
         .big-btn {
+            position: relative;
+            z-index: 10;
             background: linear-gradient(135deg, #ef4444 0%, #f97316 100%);
             color: white;
             font-size: 1.8rem;
@@ -164,11 +166,58 @@
                 font-size: 1.3rem;
             }
         }
+
+        /* Контейнер и анимация падающих заданий на фоне */
+        #floatingContainer {
+            position: fixed;
+            inset: 0;
+            overflow: hidden;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .floating-task {
+            position: absolute;
+            max-width: 280px;
+            padding: 10px 16px;
+            background: rgba(30, 41, 59, 0.45);
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            color: rgba(248, 250, 252, 0.7);
+            font-size: 0.95rem;
+            line-height: 1.4;
+            word-wrap: break-word;
+            opacity: 0;
+            animation: appearFloatFade 5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+            user-select: none;
+        }
+
+        @keyframes appearFloatFade {
+            0% {
+                opacity: 0;
+                transform: scale(0.85) translateY(0);
+            }
+            15% {
+                opacity: 0.85;
+                transform: scale(1) translateY(10px);
+            }
+            70% {
+                opacity: 0.7;
+                transform: scale(1) translateY(45px);
+            }
+            100% {
+                opacity: 0;
+                transform: scale(0.95) translateY(75px);
+            }
+        }
     </style>
 </head>
 <body>
 
     <!-- Большая кнопка по центру -->
+    <div id="floatingContainer"></div>
     <button class="big-btn" onclick="openModal()">
         <span style="font-size: 2.2rem; line-height: 1;">🎯</span>
         <span>Дать задание</span>
@@ -193,6 +242,66 @@
 
     <script>
         const modalOverlay = document.getElementById('modalOverlay');
+        const floatingContainer = document.getElementById('floatingContainer');
+        let backgroundTasks = [];
+
+        // Базовые примеры на случай, если база данных пока пуста
+        const fallbackTasks = [
+            "Прыгни с парашютом",
+            "Позвони случайному номеру",
+            "Сделай 50 отжиманий прямо сейчас",
+            "Съешь ложку корицы",
+            "Проведи стрим 24 часа"
+        ];
+
+        async function fetchBackgroundTasks() {
+            try {
+                const res = await fetch('/api/public-tasks');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data && data.length > 0) {
+                        backgroundTasks = data.map(item => item.text);
+                    }
+                }
+            } catch (e) {
+                console.log('Используются дефолтные подсказки на фоне');
+            }
+            if (backgroundTasks.length === 0) {
+                backgroundTasks = [...fallbackTasks];
+            }
+        }
+
+        function spawnFloatingTask() {
+            if (backgroundTasks.length === 0) return;
+
+            // Выбираем случайное задание
+            const randomText = backgroundTasks[Math.floor(Math.random() * backgroundTasks.length)];
+            
+            const item = document.createElement('div');
+            item.className = 'floating-task';
+            // Обрезаем слишком длинные фразы, чтобы фон оставался аккуратным
+            item.innerText = randomText.length > 80 ? randomText.slice(0, 80) + '...' : randomText;
+
+            // Случайные координаты по экрану (с отступами от краёв)
+            const x = Math.floor(Math.random() * 75) + 5; // 5% - 80% ширины
+            const y = Math.floor(Math.random() * 70) + 5; // 5% - 75% высоты
+
+            item.style.left = `${x}%`;
+            item.style.top = `${y}%`;
+
+            floatingContainer.appendChild(item);
+
+            // Удаляем элемент из DOM после окончания анимации (5 секунд)
+            setTimeout(() => {
+                item.remove();
+            }, 5000);
+        }
+
+        // Запуск загрузки и интервала появления (каждые 1.8 секунды)
+        fetchBackgroundTasks().then(() => {
+            spawnFloatingTask();
+            setInterval(spawnFloatingTask, 1800);
+        });
         const taskInput = document.getElementById('taskInput');
         const submitBtn = document.getElementById('submitBtn');
         const statusMsg = document.getElementById('statusMsg');
@@ -235,6 +344,10 @@
                     statusMsg.style.display = 'block';
                     statusMsg.style.color = '#4ade80';
                     statusMsg.innerText = '✅ Задание отправлено блогеру!';
+                    
+                    // Сразу добавляем новое задание в пул на фон
+                    backgroundTasks.unshift(text);
+                    
                     taskInput.value = '';
                     setTimeout(closeModal, 1500);
                 } else {

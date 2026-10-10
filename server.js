@@ -44,6 +44,18 @@ app.post('/api/tasks', async (req, res) => {
     res.json({ success: true });
 });
 
+// 1.1 Публичный список текстов для фона (без IP-адресов)
+app.get('/api/public-tasks', async (req, res) => {
+    const { data, error } = await supabase
+        .from('tasks')
+        .select('text')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data);
+});
+
 // 2. Вход для админа
 app.post('/api/login', (req, res) => {
     if (req.body.password === ADMIN_PASSWORD) {

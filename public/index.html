@@ -244,6 +244,27 @@
         const modalOverlay = document.getElementById('modalOverlay');
         const floatingContainer = document.getElementById('floatingContainer');
         let backgroundTasks = [];
+        let taskQueue = []; // Очередь не показанных заданий
+
+        // Функция случайного перемешивания массива (Фишер-Йетс)
+        function shuffleArray(array) {
+            const arr = [...array];
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        function getNextTask() {
+            if (backgroundTasks.length === 0) return null;
+
+            if (taskQueue.length === 0) {
+                taskQueue = shuffleArray(backgroundTasks);
+            }
+
+            return taskQueue.shift();
+        }
 
         // Базовые примеры на случай, если база данных пока пуста
         const fallbackTasks = [
@@ -273,15 +294,14 @@
         }
 
         function spawnFloatingTask() {
-            if (backgroundTasks.length === 0) return;
-
-            // Выбираем случайное задание
-            const randomText = backgroundTasks[Math.floor(Math.random() * backgroundTasks.length)];
+            // Получаем следующее задание из очереди без повторений
+            const currentText = getNextTask();
+            if (!currentText) return;
             
             const item = document.createElement('div');
             item.className = 'floating-task';
             // Обрезаем слишком длинные фразы, чтобы фон оставался аккуратным
-            item.innerText = randomText.length > 80 ? randomText.slice(0, 80) + '...' : randomText;
+            item.innerText = currentText.length > 80 ? currentText.slice(0, 80) + '...' : currentText;
 
             // Случайные координаты по экрану (с отступами от краёв)
             const x = Math.floor(Math.random() * 75) + 5; // 5% - 80% ширины
@@ -301,7 +321,7 @@
         // Запуск загрузки и интервала появления (каждые 1.8 секунды)
         fetchBackgroundTasks().then(() => {
             spawnFloatingTask();
-            setInterval(spawnFloatingTask, 2500);
+            setInterval(spawnFloatingTask, 2000);
         });
         const taskInput = document.getElementById('taskInput');
         const submitBtn = document.getElementById('submitBtn');
@@ -346,8 +366,9 @@
                     statusMsg.style.color = '#4ade80';
                     statusMsg.innerText = '✅ Задание отправлено блогеру!';
                     
-                    // Сразу добавляем новое задание в пул на фон
+                    // Сразу добавляем новое задание в общий пул и в начало очереди
                     backgroundTasks.unshift(text);
+                    taskQueue.unshift(text);
                     
                     taskInput.value = '';
                     setTimeout(closeModal, 1500);

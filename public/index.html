@@ -163,6 +163,21 @@
             body {
                 padding: 12px;
             }
+            /* Оптимизация для мобильных: убираем backdrop-filter, используем плотный цвет */
+            .modal-overlay {
+                background: rgba(15, 23, 42, 0.96) !important;
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+            }
+            .floating-task {
+                backdrop-filter: none !important;
+                -webkit-backdrop-filter: none !important;
+                background: #1e293b !important;
+            }
+            /* Скрываем фоновые плавающие задания при открытых модальных окнах */
+            body.modal-open #floatingContainer {
+                display: none !important;
+            }
             .big-btn {
                 width: 210px;
                 height: 210px;
@@ -394,11 +409,15 @@
         .feed-list {
             flex: 1;
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch; /* Плавный инерционный скролл для iOS/Safari */
+            overscroll-behavior-y: contain;   /* Изоляция скролла от страницы */
             display: flex;
             flex-direction: column;
             gap: 12px;
             padding-right: 5px;
             margin-top: 10px;
+            contain: content;                 /* Изолирует перерисовки внутри списка */
+            transform: translateZ(0);         /* Включение аппаратного ускорения GPU */
         }
 
         .feed-list::-webkit-scrollbar {
@@ -417,7 +436,8 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
-            animation: fadeIn 0.25s ease;
+            contain: layout style;            /* Оптимизация рендеринга для браузера */
+            will-change: transform;
         }
 
         .feed-item-text {
@@ -671,6 +691,9 @@
         }
 
         function spawnFloatingTask(customText = null, isHighlight = false) {
+            // Не создаем фоновые элементы, если открыто модальное окно (экономит CPU и FPS)
+            if (document.body.classList.contains('modal-open') && !customText) return;
+
             // Если передан customText — используем его, иначе берём из очереди
             const currentText = customText || getNextTask();
             if (!currentText) return;
@@ -787,6 +810,7 @@
         }
 
         function openFeedModal() {
+            document.body.classList.add('modal-open');
             feedModalOverlay.classList.add('active');
             // Если данные уже есть — не дергаем повторно надписи и скелетоны
             if (!hasInitialLoaded) {
@@ -795,6 +819,7 @@
         }
 
         function closeFeedModal() {
+            document.body.classList.remove('modal-open');
             feedModalOverlay.classList.remove('active');
         }
 
@@ -1108,11 +1133,13 @@
         const statusMsg = document.getElementById('statusMsg');
 
         function openModal() {
+            document.body.classList.add('modal-open');
             modalOverlay.classList.add('active');
             taskInput.focus();
         }
 
         function closeModal() {
+            document.body.classList.remove('modal-open');
             modalOverlay.classList.remove('active');
             taskInput.value = '';
             statusMsg.style.display = 'none';

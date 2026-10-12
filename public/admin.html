@@ -165,6 +165,46 @@
             text-align: left;
         }
         .blacklist-table th { background: #0f172a; color: var(--text-muted); }
+
+        /* Стили тумблера Анти-сна */
+        .keepalive-panel {
+            background: #0f172a;
+            border: 1px solid var(--border);
+            padding: 8px 14px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: #334155;
+            transition: .3s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #10b981; }
+        input:checked + .slider:before { transform: translateX(20px); }
     </style>
 </head>
 <body>
@@ -185,7 +225,17 @@
                 <h1>Панель управления</h1>
                 <p style="color: var(--text-muted);">Заданий в базе: <span id="tasksCount" style="color: var(--accent); font-weight: bold;">0</span></p>
             </div>
-            <div class="actions">
+            <div class="actions" style="align-items: center; flex-wrap: wrap;">
+                <!-- Ползунок Анти-сна -->
+                <div class="keepalive-panel">
+                    <span style="font-size: 0.85em; font-weight: 600;">⚡ Анти-сон (10м)</span>
+                    <label class="switch">
+                        <input type="checkbox" id="keepAliveToggle" onchange="toggleKeepAlive(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                    <span id="keepAliveStatusText" style="font-size: 0.75em; color: var(--text-muted);">...</span>
+                </div>
+
                 <button class="btn btn-primary" onclick="refreshCurrentTab()">🔄 Обновить</button>
                 <button class="btn btn-danger" onclick="logout()">Выйти</button>
             </div>
@@ -246,6 +296,47 @@
             document.getElementById('loginScreen').style.display = 'none';
             document.getElementById('adminContainer').style.display = 'block';
             loadTasks();
+            loadKeepAliveStatus();
+        }
+
+        async function loadKeepAliveStatus() {
+            try {
+                const res = await fetch('/api/admin/keepalive', {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('keepAliveToggle').checked = data.enabled;
+                
+                const timeText = data.lastPing ? new Date(data.lastPing).toLocaleTimeString('ru-RU') : 'еще не был';
+                document.getElementById('keepAliveStatusText').innerText = data.enabled 
+                    ? `Вкл (пинг: ${timeText})` 
+                    : 'Выкл';
+            } catch (e) {
+                console.error('Ошибка загрузки статуса анти-сна', e);
+            }
+        }
+
+        async function toggleKeepAlive(enabled) {
+            const statusEl = document.getElementById('keepAliveStatusText');
+            statusEl.innerText = 'Сохранение...';
+            try {
+                const res = await fetch('/api/admin/keepalive', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ enabled })
+                });
+                if (res.ok) {
+                    loadKeepAliveStatus();
+                } else {
+                    alert('Не удалось изменить статус');
+                }
+            } catch (e) {
+                alert('Ошибка соединения с сервером');
+            }
         }
 
         function switchTab(tab) {
@@ -260,6 +351,7 @@
         }
 
         function refreshCurrentTab() {
+            loadKeepAliveStatus();
             if (currentTab === 'tasks') loadTasks();
             else loadReportsAndBlacklist();
         }

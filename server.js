@@ -9,6 +9,26 @@ let sseClients = [];
 
 // Кэш для защиты от спама: хранит временную метку последней отправки задания по IP
 const taskRateLimitMap = new Map();
+// --- Механизм Анти-сна (Keep-Alive) ---
+let keepAliveEnabled = true; // По умолчанию включен
+let lastKeepAliveTime = null;
+let detectedBaseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL || null;
+
+// Эмитация активности (HTTP-запрос самому себе)
+async function pingSelf() {
+    if (!keepAliveEnabled) return;
+    const targetUrl = detectedBaseUrl || `http://localhost:${PORT}`;
+    try {
+        await fetch(`${targetUrl}/api/ping`);
+        lastKeepAliveTime = new Date().toISOString();
+        console.log(`[Keep-Alive] 🟢 Сервер успешно пинганул себя: ${targetUrl}/api/ping (${new Date().toLocaleTimeString('ru-RU')})`);
+    } catch (e) {
+        console.error('[Keep-Alive] 🔴 Ошибка пинга:', e.message);
+    }
+}
+
+// Запуск пинга каждые 10 минут (600 000 мс)
+setInterval(pingSelf, 10 * 60 * 1000);
 const TASK_COOLDOWN_MS = 60 * 1000; // Задержка 1 минута
 
 // Периодическая очистка устаревших записей из памяти (каждые 5 минут)
@@ -39,6 +59,17 @@ app.set('trust proxy', true);
 
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static('public'));
+// Автоматически запоминаем публичный URL сайта от первого вошедшего пользователя
+app.use((req, res, next) => {
+    if (!detectedBaseUrl && req.get('host')) {
+        const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+        detectedBaseUrl = `${protocol}://${req.get('host')}`;
+    }
+    next();
+});
+
+// Легкий эндпоинт для самопинга
+app.get('/api/ping', (req, res) => res.send('pong'));
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -321,6 +352,25 @@ app.delete('/api/admin/blacklist/:ip', authMiddleware, async (req, res) => {
     const { error } = await supabase.from('banned_ips').delete().eq('ip', ip);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ success: true });
+});
+
+// 9. Получить статус Анти-сна (только для админа)
+app.get('/api/admin/keepalive', authMiddleware, (req, res) => {
+    res.json({
+        enabled: keepAliveEnabled,
+        lastPing: lastKeepAliveTime,
+        url: detectedBaseUrl
+    });
+});
+
+// 10. Переключить статус Анти-сна (только для админа)
+app.post('/api/admin/keepalive', authMiddleware, (req, res) => {
+    const { enabled } = req.body;
+    keepAliveEnabled = Boolean(enabled);
+    if (keepAliveEnabled) {
+        pingSelf(); // Пингуем сразу при ручном включении
+    }
+    res.json({ success: true, enabled: keepAliveEnabled });
 });
 
 const PORT = process.env.PORT || 3000;

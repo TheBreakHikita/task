@@ -434,7 +434,6 @@
 
     <!-- Полупрозрачная кнопка списка заданий снизу -->
     <button class="bottom-feed-btn" onclick="openFeedModal()">
-        <span>📋</span>
         <span>Список заданий</span>
     </button>
 
@@ -647,11 +646,24 @@
             loadFeed();
         }
 
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.innerText = text;
+            return div.innerHTML;
+        }
+
         async function loadFeed() {
             feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Загрузка...</div>';
             try {
                 const res = await fetch(`/api/feed-tasks?sort=${currentFeedSort}`);
-                const tasks = await res.json();
+                const data = await res.json();
+
+                if (!res.ok) {
+                    throw new Error(data.error || 'Ошибка ответа сервера');
+                }
+
+                const tasks = Array.isArray(data) ? data : [];
 
                 const localVotes = getLocalActionIds('client_voted_tasks');
                 const localReports = getLocalActionIds('client_reported_tasks');
@@ -688,7 +700,8 @@
                     `;
                 }).join('');
             } catch (err) {
-                feedList.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 40px;">Ошибка загрузки заданий</div>';
+                console.error('Ошибка ленты:', err);
+                feedList.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 40px;">Ошибка загрузки заданий: ${escapeHtml(err.message)}</div>`;
             }
         }
 

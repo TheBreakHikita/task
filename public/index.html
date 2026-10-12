@@ -982,30 +982,48 @@
             }
         }
 
-        // Плавная перестановка карточки на её правильное место в топе без перерисовки всего списка
+        // Плавная перестановка карточки на её правильное место в топе (как вверх, так и вниз)
         function reorderCardInTopFeed(card, likes, taskTime) {
-            let previous = card.previousElementSibling;
-            while (previous && previous.classList.contains('feed-item')) {
-                const prevLikes = parseInt(previous.getAttribute('data-likes') || '0', 10);
-                const prevTime = parseInt(previous.getAttribute('data-time') || '0', 10);
+            const items = Array.from(feedList.querySelectorAll('.feed-item'));
+            if (!items.includes(card)) return;
 
-                if (likes > prevLikes || (likes === prevLikes && taskTime > prevTime)) {
-                    previous = previous.previousElementSibling;
-                } else {
+            // Находим карточку, перед которой должно стоять текущее задание
+            let target = null;
+            for (const item of items) {
+                if (item === card) continue;
+
+                const iLikes = parseInt(item.getAttribute('data-likes') || '0', 10);
+                const iTime = parseInt(item.getAttribute('data-time') || '0', 10);
+
+                // Задание выше, если у него больше лайков, либо при равенстве лайков оно создано позже
+                const isHigher = (likes > iLikes) || (likes === iLikes && taskTime > iTime);
+                if (isHigher) {
+                    target = item;
                     break;
                 }
             }
 
-            if (previous) {
-                if (previous.nextElementSibling !== card) {
-                    feedList.insertBefore(card, previous.nextElementSibling);
-                    card.classList.add('highlight-live');
+            let moved = false;
+
+            if (target) {
+                // Если позиция изменилась, вставляем перед найденной карточкой
+                if (card.nextElementSibling !== target) {
+                    feedList.insertBefore(card, target);
+                    moved = true;
                 }
             } else {
-                if (feedList.firstElementChild !== card) {
-                    feedList.prepend(card);
-                    card.classList.add('highlight-live');
+                // Если задание уступает всем по лайкам — опускаем в самый конец списка
+                if (card !== feedList.lastElementChild) {
+                    feedList.appendChild(card);
+                    moved = true;
                 }
+            }
+
+            // Перезапуск эффекта анимации при смене позиции
+            if (moved) {
+                card.classList.remove('highlight-live');
+                void card.offsetWidth;
+                card.classList.add('highlight-live');
             }
         }
 
@@ -1049,6 +1067,8 @@
                         btn.classList.remove('active');
                         removeLocalActionId('client_voted_tasks', taskId);
                     }
+                    // Мгновенно пересортировываем задание на клиенте (вверх при лайке или вниз при снятии)
+                    handleRealtimeVoteUpdate({ id: taskId, likes_count: data.likes_count });
                 }
             } catch (err) {
                 console.error('Ошибка при голосовании', err);
@@ -1102,10 +1122,32 @@
             if (e.target === modalOverlay) closeModal();
         }
 
+        // Проверка локального кулдауна в браузере (1 минута)
+        function checkBrowserCooldown() {
+            const lastSent = parseInt(localStorage.getItem('last_task_sent_time') || '0', 10);
+            const now = Date.now();
+            const elapsed = now - lastSent;
+            const cooldown = 60 * 1000;
+
+            if (elapsed < cooldown) {
+                return Math.ceil((cooldown - elapsed) / 1000);
+            }
+            return 0;
+        }
+
         async function sendTask() {
             const text = taskInput.value.trim();
             if (!text) {
                 alert('Пожалуйста, напишите хоть что-нибудь!');
+                return;
+            }
+
+            // Проверка по браузеру перед отправкой запроса
+            const browserWait = checkBrowserCooldown();
+            if (browserWait > 0) {
+                statusMsg.style.display = 'block';
+                statusMsg.style.color = '#ef4444';
+                statusMsg.innerText = `⏳ Вы можете отправить следующее задание через ${browserWait} сек.`;
                 return;
             }
 
@@ -1125,6 +1167,7 @@
                     statusMsg.style.display = 'block';
                     statusMsg.style.color = '#4ade80';
                     statusMsg.innerText = '✅ Задание отправлено блогеру!';
+                    localStorage.setItem('last_task_sent_time', Date.now().toString());
                     
                     // Сразу добавляем новое задание в общий пул и в начало очереди
                     backgroundTasks.unshift(text);

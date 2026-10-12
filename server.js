@@ -7,6 +7,20 @@ const app = express();
 // Список активных SSE-соединений для real-time обновлений
 let sseClients = [];
 
+// Кэш для защиты от спама: хранит временную метку последней отправки задания по IP
+const taskRateLimitMap = new Map();
+const TASK_COOLDOWN_MS = 60 * 1000; // Задержка 1 минута
+
+// Периодическая очистка устаревших записей из памяти (каждые 5 минут)
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, lastTime] of taskRateLimitMap.entries()) {
+        if (now - lastTime > TASK_COOLDOWN_MS) {
+            taskRateLimitMap.delete(ip);
+        }
+    }
+}, 5 * 60 * 1000);
+
 function broadcastFeedEvent(type, payload) {
     const data = JSON.stringify({ type, payload });
     sseClients.forEach(client => {
@@ -54,6 +68,17 @@ app.post('/api/tasks', async (req, res) => {
         return res.status(403).json({ error: 'Ваш IP находится в чёрном списке' });
     }
 
+    // Проверка лимита по IP (кулдаун 1 минута)
+    const now = Date.now();
+    const lastSentTime = taskRateLimitMap.get(ip);
+    if (lastSentTime && now - lastSentTime < TASK_COOLDOWN_MS) {
+        const timeLeftSec = Math.ceil((TASK_COOLDOWN_MS - (now - lastSentTime)) / 1000);
+        return res.status(429).json({
+            error: `Подождите ещё ${timeLeftSec} сек. перед отправкой следующего задания.`,
+            retryAfter: timeLeftSec
+        });
+    }
+
     const { data: inserted, error } = await supabase.from('tasks').insert([
         { text: text.trim(), ip: ip, likes_count: 0, reports_count: 0 }
     ]).select().single();
@@ -63,6 +88,7 @@ app.post('/api/tasks', async (req, res) => {
     }
 
     // Оповещаем всех подключенных пользователей о новом задании
+    taskRateLimitMap.set(ip, Date.now());
     broadcastFeedEvent('new_task', {
         id: inserted.id,
         text: inserted.text,

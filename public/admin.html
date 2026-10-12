@@ -138,6 +138,19 @@
         }
         .btn-ban:hover { background: #eab308; color: #000; }
 
+        .btn-dismiss {
+            background: transparent;
+            border: 1px solid #10b981;
+            color: #34d399;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85em;
+            transition: 0.2s;
+        }
+        .btn-dismiss:hover { background: #10b981; color: #fff; }
+
         .blacklist-table {
             width: 100%;
             border-collapse: collapse;
@@ -292,7 +305,8 @@
                             ${task.reports_count > 0 ? `<span class="report-badge" style="margin-left: 8px;">⚠️ Жалоб: ${task.reports_count}</span>` : ''}
                             <span style="margin-left: 10px;">🕒 ${date}</span>
                         </div>
-                        <div style="display: flex; gap: 10px; align-items: center;">
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            ${task.reports_count > 0 ? `<button class="btn-dismiss" onclick="resetReports(${task.id})">Снять жалобы ✓</button>` : ''}
                             <button class="btn-ban" onclick="banIp('${escapeHtml(task.ip)}')">Бан по IP</button>
                             <button class="task-delete-btn" onclick="deleteTask(${task.id})">Удалить ✕</button>
                         </div>
@@ -339,7 +353,8 @@
                             <span style="margin-left: 10px;">🌐 IP автора: </span>
                             <span class="ip-badge">${escapeHtml(task.ip)}</span>
                         </div>
-                        <div style="display: flex; gap: 10px;">
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button class="btn-dismiss" onclick="resetReports(${task.id})">Снять жалобы ✓</button>
                             <button class="btn-ban" onclick="banIp('${escapeHtml(task.ip)}')">Забанить IP автора</button>
                             <button class="task-delete-btn" onclick="deleteTask(${task.id}, true)">Удалить задание ✕</button>
                         </div>
@@ -379,6 +394,29 @@
             `;
         }
 
+        async function resetReports(id) {
+            if (!confirm('Обнулить жалобы на это задание?')) return;
+
+            try {
+                const res = await fetch(`/api/admin/tasks/${id}/reset-reports`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+
+                if (res.ok) {
+                    if (currentTab === 'reports') {
+                        loadReportsAndBlacklist();
+                    } else {
+                        loadTasks();
+                    }
+                } else {
+                    alert('Ошибка при сбросе жалоб');
+                }
+            } catch (e) {
+                alert('Ошибка соединения с сервером');
+            }
+        }
+        
         async function banIp(ip) {
             if (!confirm(`Добавить IP ${ip} в чёрный список? Пользователь больше не сможет отправлять задания.`)) return;
 

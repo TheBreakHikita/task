@@ -160,10 +160,46 @@
         }
 
         @media (max-width: 600px) {
+            body {
+                padding: 12px;
+            }
             .big-btn {
-                width: 200px;
-                height: 200px;
-                font-size: 1.3rem;
+                width: 210px;
+                height: 210px;
+                font-size: 1.4rem;
+            }
+            .modal-overlay {
+                padding: 10px;
+            }
+            .modal {
+                padding: 20px 16px;
+                border-radius: 16px;
+            }
+            .feed-modal {
+                height: 94vh !important;
+                max-height: 94vh !important;
+                padding: 16px 12px !important;
+            }
+            .feed-item {
+                padding: 12px !important;
+                border-radius: 10px !important;
+            }
+            .feed-item-text {
+                font-size: 0.98rem !important;
+            }
+            .feed-item-footer {
+                flex-direction: column;
+                align-items: flex-start !important;
+                gap: 8px;
+            }
+            .feed-actions {
+                width: 100%;
+                justify-content: flex-end;
+            }
+            .bottom-feed-btn {
+                bottom: 16px;
+                padding: 10px 22px;
+                font-size: 0.95rem;
             }
         }
 
@@ -271,32 +307,87 @@
             gap: 10px;
         }
 
-        /* Переключатели сортировки */
-        .feed-tabs {
-            display: flex;
-            background: #0f172a;
-            padding: 4px;
-            border-radius: 10px;
-            border: 1px solid #334155;
-            gap: 4px;
+        /* Контекстное меню сортировки */
+        .sort-dropdown-wrap {
+            position: relative;
+            display: inline-block;
         }
 
-        .tab-btn {
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            padding: 6px 14px;
-            border-radius: 7px;
+        .sort-dropdown-btn {
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #f1f5f9;
+            padding: 8px 14px;
+            border-radius: 10px;
             font-size: 0.9em;
             font-weight: 600;
             cursor: pointer;
-            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
         }
 
-        .tab-btn.active {
-            background: var(--surface);
+        .sort-dropdown-btn:hover {
+            border-color: #475569;
+            background: #1e293b;
+        }
+
+        .sort-arrow {
+            font-size: 0.75em;
+            color: var(--text-muted);
+            transition: transform 0.2s;
+        }
+
+        .sort-dropdown-wrap.open .sort-arrow {
+            transform: rotate(180deg);
+        }
+
+        .sort-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 4px;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.45);
+            display: none;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 140px;
+            z-index: 50;
+            animation: fadeIn 0.15s ease;
+        }
+
+        .sort-dropdown-wrap.open .sort-menu {
+            display: flex;
+        }
+
+        .sort-menu-item {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            text-align: left;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: 0.15s;
+        }
+
+        .sort-menu-item:hover {
+            background: #334155;
             color: #fff;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .sort-menu-item.active {
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.12);
         }
 
         /* Список заданий */
@@ -448,9 +539,15 @@
                 <button class="close-feed-btn" onclick="closeFeedModal()">✕</button>
             </div>
 
-            <div class="feed-tabs">
-                <button class="tab-btn active" id="tabNew" onclick="setFeedSort('new')">🕒 Свежие</button>
-                <button class="tab-btn" id="tabTop" onclick="setFeedSort('top')">🔥 Лучшие</button>
+            <div class="sort-dropdown-wrap" id="sortDropdownWrap">
+                <button class="sort-dropdown-btn" id="sortDropdownBtn" onclick="toggleSortDropdown(event)">
+                    <span id="currentSortLabel">🔥 Лучшие</span>
+                    <span class="sort-arrow">▼</span>
+                </button>
+                <div class="sort-menu" id="sortMenu">
+                    <button class="sort-menu-item active" id="sortOpt-top" onclick="selectFeedSort('top')">🔥 Лучшие</button>
+                    <button class="sort-menu-item" id="sortOpt-new" onclick="selectFeedSort('new')">🕒 Свежие</button>
+                </div>
             </div>
 
             <div class="feed-list" id="feedList">
@@ -603,7 +700,7 @@
         // ЛОГИКА СПИСКА ЗАДАНИЙ, ГОЛОСОВАНИЯ И ЖАЛОБ
         const feedModalOverlay = document.getElementById('feedModalOverlay');
         const feedList = document.getElementById('feedList');
-        let currentFeedSort = 'new';
+        let currentFeedSort = 'top';
 
         // Локальное кэширование действий пользователя в браузере (доп. защита от накрутки)
         function getLocalActionIds(key) {
@@ -638,13 +735,32 @@
             if (e.target === feedModalOverlay) closeFeedModal();
         }
 
-        function setFeedSort(sort) {
+        function toggleSortDropdown(e) {
+            e.stopPropagation();
+            document.getElementById('sortDropdownWrap').classList.toggle('open');
+        }
+
+        function selectFeedSort(sort) {
+            document.getElementById('sortDropdownWrap').classList.remove('open');
             if (currentFeedSort === sort) return;
+
             currentFeedSort = sort;
-            document.getElementById('tabNew').classList.toggle('active', sort === 'new');
-            document.getElementById('tabTop').classList.toggle('active', sort === 'top');
+            const labelEl = document.getElementById('currentSortLabel');
+            labelEl.innerText = sort === 'top' ? '🔥 Лучшие' : '🕒 Свежие';
+
+            document.getElementById('sortOpt-top').classList.toggle('active', sort === 'top');
+            document.getElementById('sortOpt-new').classList.toggle('active', sort === 'new');
+
             loadFeed();
         }
+
+        // Закрытие меню сортировки при клике в любое свободное место
+        document.addEventListener('click', (e) => {
+            const wrap = document.getElementById('sortDropdownWrap');
+            if (wrap && !wrap.contains(e.target)) {
+                wrap.classList.remove('open');
+            }
+        });
 
         function escapeHtml(text) {
             if (!text) return '';

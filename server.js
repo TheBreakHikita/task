@@ -207,6 +207,24 @@ app.get('/api/admin/reports', authMiddleware, async (req, res) => {
     res.json(data);
 });
 
+// 5.1 Обнуление жалоб на задании (только для админа)
+app.post('/api/admin/tasks/:id/reset-reports', authMiddleware, async (req, res) => {
+    const { id } = req.params;
+
+    // Сбрасываем счетчик жалоб задания в ноль
+    const { error: updateErr } = await supabase
+        .from('tasks')
+        .update({ reports_count: 0 })
+        .eq('id', id);
+
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    // Удаляем записи о жалобах из связующей таблицы
+    await supabase.from('task_reports').delete().eq('task_id', id);
+
+    res.json({ success: true });
+});
+
 // 6. Получение списка забаненных IP
 app.get('/api/admin/blacklist', authMiddleware, async (req, res) => {
     const { data, error } = await supabase.from('banned_ips').select('*').order('created_at', { ascending: false });

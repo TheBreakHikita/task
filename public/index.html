@@ -512,6 +512,52 @@
             line-height: 1;
         }
         .close-feed-btn:hover { color: #fff; }
+
+        /* Красивая анимация серых блоков загрузки (скелетоны) */
+        .skeleton-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            pointer-events: none;
+        }
+
+        .skeleton-line {
+            height: 14px;
+            background: #1e293b;
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .skeleton-line.w-80 { width: 80%; height: 16px; }
+        .skeleton-line.w-50 { width: 50%; height: 16px; }
+        .skeleton-btn { width: 60px; height: 32px; background: #1e293b; border-radius: 8px; position: relative; overflow: hidden; }
+
+        .shimmer::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            transform: translateX(-100%);
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+            animation: skeletonShimmer 1.4s infinite;
+        }
+
+        @keyframes skeletonShimmer {
+            100% { transform: translateX(100%); }
+        }
+
+        .feed-item.highlight-live {
+            animation: liveFlash 1.5s ease-out;
+        }
+
+        @keyframes liveFlash {
+            0% { border-color: #38bdf8; box-shadow: 0 0 16px rgba(56, 189, 248, 0.4); }
+            100% { border-color: #334155; box-shadow: none; }
+        }
     </style>
 </head>
 <body>
@@ -550,9 +596,7 @@
                 </div>
             </div>
 
-            <div class="feed-list" id="feedList">
-                <div style="text-align: center; color: var(--text-muted); padding: 40px;">Загрузка...</div>
-            </div>
+            <div class="feed-list" id="feedList"></div>
         </div>
     </div>
 
@@ -701,8 +745,11 @@
         const feedModalOverlay = document.getElementById('feedModalOverlay');
         const feedList = document.getElementById('feedList');
         let currentFeedSort = 'top';
+        let currentFeedData = []; // Локальный кэш списка
+        let hasInitialLoaded = false;
+        let eventSource = null;
 
-        // Локальное кэширование действий пользователя в браузере (доп. защита от накрутки)
+        // Локальное кэширование действий пользователя
         function getLocalActionIds(key) {
             try { return JSON.parse(localStorage.getItem(key)) || []; }
             catch(e) { return []; }
@@ -722,9 +769,29 @@
             localStorage.setItem(key, JSON.stringify(list));
         }
 
+        // Рендер серых блоков-скелетонов при первичной загрузке
+        function showSkeletons() {
+            feedList.innerHTML = Array(4).fill(0).map(() => `
+                <div class="skeleton-card">
+                    <div class="skeleton-line w-80 shimmer"></div>
+                    <div class="skeleton-line w-50 shimmer"></div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 6px;">
+                        <div class="skeleton-line shimmer" style="width: 70px; height: 12px;"></div>
+                        <div style="display: flex; gap: 8px;">
+                            <div class="skeleton-btn shimmer"></div>
+                            <div class="skeleton-btn shimmer"></div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
         function openFeedModal() {
             feedModalOverlay.classList.add('active');
-            loadFeed();
+            // Если данные уже есть — не дергаем повторно надписи и скелетоны
+            if (!hasInitialLoaded) {
+                loadFeed(true);
+            }
         }
 
         function closeFeedModal() {
@@ -745,16 +812,15 @@
             if (currentFeedSort === sort) return;
 
             currentFeedSort = sort;
-            const labelEl = document.getElementById('currentSortLabel');
-            labelEl.innerText = sort === 'top' ? '🔥 Лучшие' : '🕒 Свежие';
+            document.getElementById('currentSortLabel').innerText = sort === 'top' ? '🔥 Лучшие' : '🕒 Свежие';
 
             document.getElementById('sortOpt-top').classList.toggle('active', sort === 'top');
             document.getElementById('sortOpt-new').classList.toggle('active', sort === 'new');
 
-            loadFeed();
+            // При смене сортировки плавно пересортировываем уже имеющийся массив без скелетона
+            sortAndRenderFeed();
         }
 
-        // Закрытие меню сортировки при клике в любое свободное место
         document.addEventListener('click', (e) => {
             const wrap = document.getElementById('sortDropdownWrap');
             if (wrap && !wrap.contains(e.target)) {
@@ -769,57 +835,202 @@
             return div.innerHTML;
         }
 
-        async function loadFeed() {
-            feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Загрузка...</div>';
+        function createFeedCardHtml(task) {
+            const localVotes = getLocalActionIds('client_voted_tasks');
+            const isVoted = task.hasVoted || localVotes.includes(task.id);
+            const isReported = Boolean(task.hasReported);
+            const date = new Date(task.created_at).toLocaleString('ru-RU', {
+                day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+            });
+
+            return `
+            <div class="feed-item" id="feed-item-${task.id}" data-id="${task.id}" data-likes="${task.likes_count || 0}" data-time="${new Date(task.created_at).getTime()}">
+                <div class="feed-item-text">${escapeHtml(task.text)}</div>
+                <div class="feed-item-footer">
+                    <span class="feed-time">${date}</span>
+                    <div class="feed-actions">
+                        <button class="vote-btn ${isVoted ? 'active' : ''}" id="vote-btn-${task.id}" onclick="toggleVote(${task.id})">
+                            <span>❤️</span>
+                            <span id="vote-count-${task.id}">${task.likes_count || 0}</span>
+                        </button>
+                        <button class="report-btn ${isReported ? 'active' : ''}" id="report-btn-${task.id}" onclick="reportTask(${task.id})">
+                            <span>⚠️</span>
+                            <span id="report-count-${task.id}">${task.reports_count > 0 ? task.reports_count : 'Пожаловаться'}</span>
+                        </button>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        function sortAndRenderFeed() {
+            if (currentFeedSort === 'top') {
+                currentFeedData.sort((a, b) => (b.likes_count || 0) - (a.likes_count || 0) || new Date(b.created_at) - new Date(a.created_at));
+            } else {
+                currentFeedData.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            }
+
+            if (!currentFeedData.length) {
+                feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Заданий пока нет 😴</div>';
+                return;
+            }
+
+            feedList.innerHTML = currentFeedData.map(createFeedCardHtml).join('');
+        }
+
+        async function loadFeed(isInitial = false) {
+            if (isInitial && !hasInitialLoaded) {
+                showSkeletons();
+            }
+
             try {
                 const res = await fetch(`/api/feed-tasks?sort=${currentFeedSort}`);
                 const data = await res.json();
 
-                if (!res.ok) {
-                    throw new Error(data.error || 'Ошибка ответа сервера');
-                }
+                if (!res.ok) throw new Error(data.error || 'Ошибка загрузки');
 
-                const tasks = Array.isArray(data) ? data : [];
+                currentFeedData = Array.isArray(data) ? data : [];
+                hasInitialLoaded = true;
 
-                const localVotes = getLocalActionIds('client_voted_tasks');
                 const localReports = getLocalActionIds('client_reported_tasks');
+                currentFeedData.forEach(task => {
+                    if (!task.hasReported && localReports.includes(task.id)) {
+                        removeLocalActionId('client_reported_tasks', task.id);
+                    }
+                });
 
-                if (!tasks.length) {
-                    feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Заданий пока нет 😴</div>';
-                    return;
-                }
-
-                feedList.innerHTML = tasks.map(task => {
-                    const isVoted = task.hasVoted || localVotes.includes(task.id);
-                    const isReported = task.hasReported || localReports.includes(task.id);
-                    const date = new Date(task.created_at).toLocaleString('ru-RU', {
-                        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
-                    });
-
-                    return `
-                    <div class="feed-item" id="feed-item-${task.id}">
-                        <div class="feed-item-text">${escapeHtml(task.text)}</div>
-                        <div class="feed-item-footer">
-                            <span class="feed-time">${date}</span>
-                            <div class="feed-actions">
-                                <button class="vote-btn ${isVoted ? 'active' : ''}" id="vote-btn-${task.id}" onclick="toggleVote(${task.id})">
-                                    <span>❤️</span>
-                                    <span id="vote-count-${task.id}">${task.likes_count || 0}</span>
-                                </button>
-                                <button class="report-btn ${isReported ? 'active' : ''}" id="report-btn-${task.id}" onclick="reportTask(${task.id})">
-                                    <span>⚠️</span>
-                                    <span id="report-count-${task.id}">${task.reports_count > 0 ? task.reports_count : 'Пожаловаться'}</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    `;
-                }).join('');
+                sortAndRenderFeed();
             } catch (err) {
                 console.error('Ошибка ленты:', err);
-                feedList.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 40px;">Ошибка загрузки заданий: ${escapeHtml(err.message)}</div>`;
+                if (!hasInitialLoaded) {
+                    feedList.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 40px;">Ошибка: ${escapeHtml(err.message)}</div>`;
+                }
             }
         }
+
+        // Подключение SSE: обновления в реальном времени для всех
+        function initRealtimeFeed() {
+            if (eventSource) return;
+
+            eventSource = new EventSource('/api/feed-stream');
+
+            eventSource.onmessage = (event) => {
+                try {
+                    const { type, payload } = JSON.parse(event.data);
+
+                    if (type === 'new_task') {
+                        handleRealtimeNewTask(payload);
+                    } else if (type === 'vote_update') {
+                        handleRealtimeVoteUpdate(payload);
+                    } else if (type === 'report_update') {
+                        handleRealtimeReportUpdate(payload);
+                    } else if (type === 'task_deleted') {
+                        handleRealtimeDelete(payload);
+                    }
+                } catch (e) {
+                    console.error('Ошибка разбора real-time события:', e);
+                }
+            };
+
+            eventSource.onerror = () => {
+                // Браузер сам автоматически восстановит SSE-соединение
+            };
+        }
+
+        // Обработка нового задания
+        function handleRealtimeNewTask(task) {
+            if (currentFeedData.some(t => t.id === task.id)) return;
+
+            currentFeedData.push(task);
+
+            // Если список был пуст — очищаем заглушку
+            if (feedList.children.length === 1 && !feedList.children[0].classList.contains('feed-item')) {
+                feedList.innerHTML = '';
+            }
+
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = createFeedCardHtml(task);
+            const cardEl = tempDiv.firstElementChild;
+            cardEl.classList.add('highlight-live');
+
+            if (currentFeedSort === 'new') {
+                // В режиме "Свежие" новое задание всегда мгновенно падает на самый верх
+                feedList.prepend(cardEl);
+            } else {
+                // В режиме "Лучшие" новое задание с 0 лайков добавляется в конец
+                feedList.appendChild(cardEl);
+            }
+        }
+
+        // Обработка изменения голосов (лайков)
+        function handleRealtimeVoteUpdate({ id, likes_count }) {
+            const task = currentFeedData.find(t => t.id === id);
+            if (task) {
+                task.likes_count = likes_count;
+            }
+
+            const countEl = document.getElementById(`vote-count-${id}`);
+            if (countEl) countEl.innerText = likes_count;
+
+            const card = document.getElementById(`feed-item-${id}`);
+            if (card) {
+                card.setAttribute('data-likes', likes_count);
+
+                // Если сортировка "🔥 Лучшие" — перемещаем карточку наверх, если она обогнала другие
+                if (currentFeedSort === 'top') {
+                    reorderCardInTopFeed(card, likes_count, task ? new Date(task.created_at).getTime() : 0);
+                }
+            }
+        }
+
+        // Плавная перестановка карточки на её правильное место в топе без перерисовки всего списка
+        function reorderCardInTopFeed(card, likes, taskTime) {
+            let previous = card.previousElementSibling;
+            while (previous && previous.classList.contains('feed-item')) {
+                const prevLikes = parseInt(previous.getAttribute('data-likes') || '0', 10);
+                const prevTime = parseInt(previous.getAttribute('data-time') || '0', 10);
+
+                if (likes > prevLikes || (likes === prevLikes && taskTime > prevTime)) {
+                    previous = previous.previousElementSibling;
+                } else {
+                    break;
+                }
+            }
+
+            if (previous) {
+                if (previous.nextElementSibling !== card) {
+                    feedList.insertBefore(card, previous.nextElementSibling);
+                    card.classList.add('highlight-live');
+                }
+            } else {
+                if (feedList.firstElementChild !== card) {
+                    feedList.prepend(card);
+                    card.classList.add('highlight-live');
+                }
+            }
+        }
+
+        // Обработка изменения репортов
+        function handleRealtimeReportUpdate({ id, reports_count }) {
+            const task = currentFeedData.find(t => t.id === id);
+            if (task) task.reports_count = reports_count;
+
+            const countEl = document.getElementById(`report-count-${id}`);
+            if (countEl) countEl.innerText = reports_count > 0 ? reports_count : 'Пожаловаться';
+        }
+
+        // Обработка удаления задания админом
+        function handleRealtimeDelete({ id }) {
+            currentFeedData = currentFeedData.filter(t => t.id !== id);
+            const card = document.getElementById(`feed-item-${id}`);
+            if (card) card.remove();
+
+            if (!currentFeedData.length) {
+                feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Заданий пока нет 😴</div>';
+            }
+        }
+
+        // Запускаем подключение SSE сразу при загрузке страницы
+        initRealtimeFeed();
 
         async function toggleVote(taskId) {
             const btn = document.getElementById(`vote-btn-${taskId}`);

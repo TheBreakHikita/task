@@ -4,6 +4,18 @@ const crypto = require('crypto');
 
 const app = express();
 
+// Список активных SSE-соединений для real-time обновлений
+let sseClients = [];
+
+function broadcastFeedEvent(type, payload) {
+    const data = JSON.stringify({ type, payload });
+    sseClients.forEach(client => {
+        try {
+            client.res.write(`data: ${data}\n\n`);
+        } catch (e) {}
+    });
+}
+
 function generateAuthToken(password) {
     return crypto.createHash('sha256').update(password + 'task_salt_secret').digest('hex');
 }
@@ -42,15 +54,46 @@ app.post('/api/tasks', async (req, res) => {
         return res.status(403).json({ error: 'Ваш IP находится в чёрном списке' });
     }
 
-    const { error } = await supabase.from('tasks').insert([
+    const { data: inserted, error } = await supabase.from('tasks').insert([
         { text: text.trim(), ip: ip, likes_count: 0, reports_count: 0 }
-    ]);
+    ]).select().single();
 
     if (error) {
         return res.status(500).json({ error: error.message });
     }
 
-    res.json({ success: true });
+    // Оповещаем всех подключенных пользователей о новом задании
+    broadcastFeedEvent('new_task', {
+        id: inserted.id,
+        text: inserted.text,
+        created_at: inserted.created_at,
+        likes_count: inserted.likes_count,
+        reports_count: inserted.reports_count
+    });
+
+    res.json({ success: true, task: inserted });
+});
+
+// Real-time поток событий для ленты (Server-Sent Events)
+app.get('/api/feed-stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const clientId = Date.now() + Math.random();
+    const newClient = { id: clientId, res };
+    sseClients.push(newClient);
+
+    // Пинг каждые 25 сек для поддержания соединения через прокси
+    const keepAlive = setInterval(() => {
+        res.write(': keep-alive\n\n');
+    }, 25000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        sseClients = sseClients.filter(c => c.id !== clientId);
+    });
 });
 
 // 1.2 Публичная лента заданий с сортировкой и статусами пользователя
@@ -104,6 +147,7 @@ app.post('/api/tasks/:id/vote', async (req, res) => {
         const { data: task } = await supabase.from('tasks').select('likes_count').eq('id', taskId).single();
         const newCount = Math.max(0, (task?.likes_count || 1) - 1);
         await supabase.from('tasks').update({ likes_count: newCount }).eq('id', taskId);
+        broadcastFeedEvent('vote_update', { id: Number(taskId), likes_count: newCount });
         return res.json({ success: true, hasVoted: false, likes_count: newCount });
     } else {
         // Ставим голос
@@ -113,6 +157,7 @@ app.post('/api/tasks/:id/vote', async (req, res) => {
         const { data: task } = await supabase.from('tasks').select('likes_count').eq('id', taskId).single();
         const newCount = (task?.likes_count || 0) + 1;
         await supabase.from('tasks').update({ likes_count: newCount }).eq('id', taskId);
+        broadcastFeedEvent('vote_update', { id: Number(taskId), likes_count: newCount });
         return res.json({ success: true, hasVoted: true, likes_count: newCount });
     }
 });
@@ -141,6 +186,7 @@ app.post('/api/tasks/:id/report', async (req, res) => {
     const newCount = (task?.reports_count || 0) + 1;
     await supabase.from('tasks').update({ reports_count: newCount }).eq('id', taskId);
 
+    broadcastFeedEvent('report_update', { id: Number(taskId), reports_count: newCount });
     res.json({ success: true, hasReported: true, reports_count: newCount });
 });
 
@@ -192,6 +238,7 @@ app.delete('/api/tasks/:id', authMiddleware, async (req, res) => {
     const { id } = req.params;
     const { error } = await supabase.from('tasks').delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message });
+    broadcastFeedEvent('task_deleted', { id: Number(id) });
     res.json({ success: true });
 });
 

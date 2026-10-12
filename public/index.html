@@ -194,6 +194,17 @@
             user-select: none;
         }
 
+        /* Подсветка только что опубликованного задания */
+        .floating-task.highlight-new {
+            background: rgba(30, 25, 10, 0.88);
+            border: 2px solid #facc15;
+            color: #fef08a;
+            font-weight: 600;
+            box-shadow: 0 0 30px rgba(250, 204, 21, 0.75), 0 8px 25px rgba(0, 0, 0, 0.5);
+            animation: appearFloatFade 7s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+            z-index: 5;
+        }
+
         @keyframes appearFloatFade {
             0% {
                 opacity: 0;
@@ -293,29 +304,70 @@
             }
         }
 
-        function spawnFloatingTask() {
-            // Получаем следующее задание из очереди без повторений
-            const currentText = getNextTask();
+        function spawnFloatingTask(customText = null, isHighlight = false) {
+            // Если передан customText — используем его, иначе берём из очереди
+            const currentText = customText || getNextTask();
             if (!currentText) return;
             
             const item = document.createElement('div');
-            item.className = 'floating-task';
+            item.className = 'floating-task' + (isHighlight ? ' highlight-new' : '');
             // Обрезаем слишком длинные фразы, чтобы фон оставался аккуратным
             item.innerText = currentText.length > 80 ? currentText.slice(0, 80) + '...' : currentText;
 
-            // Случайные координаты по экрану (с отступами от краёв)
-            const x = Math.floor(Math.random() * 75) + 5; // 5% - 80% ширины
-            const y = Math.floor(Math.random() * 70) + 5; // 5% - 75% высоты
-
-            item.style.left = `${x}%`;
-            item.style.top = `${y}%`;
-
+            // Временно скрываем для вычисления точных размеров плашки
+            item.style.visibility = 'hidden';
             floatingContainer.appendChild(item);
 
-            // Удаляем элемент из DOM после окончания анимации (5 секунд)
+            const cardWidth = item.offsetWidth || 220;
+            const cardHeight = item.offsetHeight || 50;
+
+            // Динамически получаем текущие координаты и размеры кнопки на экране
+            const btn = document.querySelector('.big-btn');
+            const btnRect = btn ? btn.getBoundingClientRect() : { left: 0, right: 0, top: 0, bottom: 0 };
+
+            const margin = 20; // Безопасный отступ вокруг кнопки
+            const animFallDistance = 75; // Расстояние, на которое карточка смещается вниз по анимации
+
+            const maxW = Math.max(10, window.innerWidth - cardWidth - 20);
+            const maxH = Math.max(10, window.innerHeight - cardHeight - animFallDistance - 20);
+
+            let posX = 10;
+            let posY = 10;
+            let positionFound = false;
+
+            // Пробуем подобрать координаты без пересечения с кнопкой
+            for (let i = 0; i < 30; i++) {
+                const testX = Math.floor(Math.random() * maxW) + 10;
+                const testY = Math.floor(Math.random() * maxH) + 10;
+
+                // Проверка пересечения плашки и траектории её падения с областью кнопки
+                const overlapX = testX < (btnRect.right + margin) && (testX + cardWidth) > (btnRect.left - margin);
+                const overlapY = testY < (btnRect.bottom + margin) && (testY + cardHeight + animFallDistance) > (btnRect.top - margin);
+
+                if (!overlapX || !overlapY) {
+                    posX = testX;
+                    posY = testY;
+                    positionFound = true;
+                    break;
+                }
+            }
+
+            // Если свободное место не нашлось (например, экран перегружен)
+            if (!positionFound) {
+                item.remove();
+                if (!customText) taskQueue.unshift(currentText);
+                return;
+            }
+
+            item.style.left = `${posX}px`;
+            item.style.top = `${posY}px`;
+            item.style.visibility = 'visible';
+
+            // Новое задание задерживается на экране дольше (7 сек против 5 сек)
+            const duration = isHighlight ? 7000 : 5000;
             setTimeout(() => {
                 item.remove();
-            }, 5000);
+            }, duration);
         }
 
         // Запуск загрузки и интервала появления (каждые 1.8 секунды)
@@ -371,7 +423,12 @@
                     taskQueue.unshift(text);
                     
                     taskInput.value = '';
-                    setTimeout(closeModal, 1500);
+                    
+                    // Закрываем модальное окно и сразу спавним подсвеченное жёлтым задание на экране
+                    setTimeout(() => {
+                        closeModal();
+                        spawnFloatingTask(text, true);
+                    }, 1200);
                 } else {
                     throw new Error(data.error || 'Ошибка отправки');
                 }

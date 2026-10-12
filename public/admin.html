@@ -90,6 +90,68 @@
             padding: 60px 0;
             font-size: 1.2em;
         }
+
+        /* Навигация вкладок админки */
+        .admin-nav {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 25px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+        }
+        .nav-tab {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.05em;
+            font-weight: 600;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .nav-tab.active {
+            background: var(--surface);
+            color: #fff;
+            border: 1px solid var(--border);
+        }
+
+        .report-badge {
+            background: rgba(239, 68, 68, 0.2);
+            color: #ef4444;
+            border: 1px solid #ef4444;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-weight: bold;
+            font-size: 0.85em;
+        }
+
+        .btn-ban {
+            background: transparent;
+            border: 1px solid #eab308;
+            color: #facc15;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85em;
+        }
+        .btn-ban:hover { background: #eab308; color: #000; }
+
+        .blacklist-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+            background: var(--surface);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .blacklist-table th, .blacklist-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+        .blacklist-table th { background: #0f172a; color: var(--text-muted); }
     </style>
 </head>
 <body>
@@ -107,16 +169,34 @@
     <div class="container" id="adminContainer" style="display: none;">
         <header>
             <div>
-                <h1>📥 Предложенные задания</h1>
-                <p style="color: var(--text-muted);">Всего заданий: <span id="tasksCount" style="color: var(--accent); font-weight: bold;">0</span></p>
+                <h1>Панель управления</h1>
+                <p style="color: var(--text-muted);">Заданий в базе: <span id="tasksCount" style="color: var(--accent); font-weight: bold;">0</span></p>
             </div>
             <div class="actions">
-                <button class="btn btn-primary" onclick="loadTasks()">🔄 Обновить</button>
+                <button class="btn btn-primary" onclick="refreshCurrentTab()">🔄 Обновить</button>
                 <button class="btn btn-danger" onclick="logout()">Выйти</button>
             </div>
         </header>
 
-        <div id="tasksList"></div>
+        <!-- Вкладки меню -->
+        <div class="admin-nav">
+            <button class="nav-tab active" id="tabTasksBtn" onclick="switchTab('tasks')">📋 Все задания</button>
+            <button class="nav-tab" id="tabReportsBtn" onclick="switchTab('reports')">🚨 Жалобы и Чёрный список</button>
+        </div>
+
+        <!-- Контент вкладки 1: Все задания -->
+        <div id="tasksTabContent">
+            <div id="tasksList"></div>
+        </div>
+
+        <!-- Контент вкладки 2: Жалобы и ЧС -->
+        <div id="reportsTabContent" style="display: none;">
+            <h2 style="margin-bottom: 15px; font-size: 1.3em;">⚠️ Задания с жалобами</h2>
+            <div id="reportedTasksList"></div>
+
+            <h2 style="margin: 35px 0 15px; font-size: 1.3em;">🚫 Заблокированные IP-адреса</h2>
+            <div id="blacklistContainer"></div>
+        </div>
     </div>
 
     <script>
@@ -147,10 +227,28 @@
             location.reload();
         }
 
+        let currentTab = 'tasks';
+
         function showAdmin() {
             document.getElementById('loginScreen').style.display = 'none';
             document.getElementById('adminContainer').style.display = 'block';
             loadTasks();
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.getElementById('tabTasksBtn').classList.toggle('active', tab === 'tasks');
+            document.getElementById('tabReportsBtn').classList.toggle('active', tab === 'reports');
+            document.getElementById('tasksTabContent').style.display = tab === 'tasks' ? 'block' : 'none';
+            document.getElementById('reportsTabContent').style.display = tab === 'reports' ? 'block' : 'none';
+
+            if (tab === 'tasks') loadTasks();
+            else loadReportsAndBlacklist();
+        }
+
+        function refreshCurrentTab() {
+            if (currentTab === 'tasks') loadTasks();
+            else loadReportsAndBlacklist();
         }
 
         async function loadTasks() {
@@ -190,16 +288,133 @@
                         <div>
                             <span>🌐 IP: </span>
                             <span class="ip-badge" title="IP адрес отправителя">${escapeHtml(task.ip)}</span>
+                            <span style="margin-left: 10px;">❤️ Лайков: <b>${task.likes_count || 0}</b></span>
+                            ${task.reports_count > 0 ? `<span class="report-badge" style="margin-left: 8px;">⚠️ Жалоб: ${task.reports_count}</span>` : ''}
                             <span style="margin-left: 10px;">🕒 ${date}</span>
                         </div>
-                        <button class="task-delete-btn" onclick="deleteTask(${task.id})">Удалить ✕</button>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button class="btn-ban" onclick="banIp('${escapeHtml(task.ip)}')">Бан по IP</button>
+                            <button class="task-delete-btn" onclick="deleteTask(${task.id})">Удалить ✕</button>
+                        </div>
                     </div>
                 </div>
                 `;
             }).join('');
         }
 
-        async function deleteTask(id) {
+        // Загрузка заданий с жалобами и заблокированных IP
+        async function loadReportsAndBlacklist() {
+            try {
+                const [repRes, blRes] = await Promise.all([
+                    fetch('/api/admin/reports', { headers: { 'Authorization': `Bearer ${authToken}` } }),
+                    fetch('/api/admin/blacklist', { headers: { 'Authorization': `Bearer ${authToken}` } })
+                ]);
+
+                if (repRes.status === 401) return logout();
+
+                const reports = await repRes.json();
+                const blacklist = await blRes.json();
+
+                renderReportedTasks(reports);
+                renderBlacklist(blacklist);
+            } catch (err) {
+                console.error(err);
+                alert('Ошибка загрузки данных вкладки жалоб');
+            }
+        }
+
+        function renderReportedTasks(tasks) {
+            const container = document.getElementById('reportedTasksList');
+            if (!tasks.length) {
+                container.innerHTML = '<div style="color: var(--text-muted); padding: 15px 0;">Жалоб нет — всё спокойно ✨</div>';
+                return;
+            }
+
+            container.innerHTML = tasks.map(task => `
+                <div class="task-card" id="rep-task-${task.id}">
+                    <div class="task-text">${escapeHtml(task.text)}</div>
+                    <div class="task-meta">
+                        <div>
+                            <span class="report-badge">⚠️ Жалоб: ${task.reports_count}</span>
+                            <span style="margin-left: 10px;">🌐 IP автора: </span>
+                            <span class="ip-badge">${escapeHtml(task.ip)}</span>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button class="btn-ban" onclick="banIp('${escapeHtml(task.ip)}')">Забанить IP автора</button>
+                            <button class="task-delete-btn" onclick="deleteTask(${task.id}, true)">Удалить задание ✕</button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderBlacklist(banned) {
+            const container = document.getElementById('blacklistContainer');
+            if (!banned.length) {
+                container.innerHTML = '<div style="color: var(--text-muted); padding: 15px 0;">Чёрный список пуст</div>';
+                return;
+            }
+
+            container.innerHTML = `
+                <table class="blacklist-table">
+                    <thead>
+                        <tr>
+                            <th>IP адрес</th>
+                            <th>Причина</th>
+                            <th>Дата бана</th>
+                            <th>Действие</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${banned.map(item => `
+                            <tr id="banned-${encodeURIComponent(item.ip)}">
+                                <td><span class="ip-badge">${escapeHtml(item.ip)}</span></td>
+                                <td>${escapeHtml(item.reason || 'Нарушение')}</td>
+                                <td>${new Date(item.created_at).toLocaleString('ru-RU')}</td>
+                                <td><button class="task-delete-btn" onclick="unbanIp('${escapeHtml(item.ip)}')">Разбанить</button></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        async function banIp(ip) {
+            if (!confirm(`Добавить IP ${ip} в чёрный список? Пользователь больше не сможет отправлять задания.`)) return;
+
+            const res = await fetch('/api/admin/blacklist', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${authToken}`
+                },
+                body: JSON.stringify({ ip, reason: 'Жалоба на задание' })
+            });
+
+            if (res.ok) {
+                alert(`IP ${ip} успешно заблокирован!`);
+                if (currentTab === 'reports') loadReportsAndBlacklist();
+            } else {
+                alert('Ошибка при блокировке IP');
+            }
+        }
+
+        async function unbanIp(ip) {
+            if (!confirm(`Разбанить IP ${ip}?`)) return;
+
+            const res = await fetch(`/api/admin/blacklist/${encodeURIComponent(ip)}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${authToken}` }
+            });
+
+            if (res.ok) {
+                loadReportsAndBlacklist();
+            } else {
+                alert('Ошибка при разблокировке');
+            }
+        }
+
+        async function deleteTask(id, isFromReports = false) {
             if (!confirm('Удалить это задание?')) return;
 
             const res = await fetch(`/api/tasks/${id}`, {
@@ -208,10 +423,13 @@
             });
 
             if (res.ok) {
-                const el = document.getElementById(`task-${id}`);
-                if (el) el.remove();
+                const el1 = document.getElementById(`task-${id}`);
+                if (el1) el1.remove();
+                const el2 = document.getElementById(`rep-task-${id}`);
+                if (el2) el2.remove();
+
                 const count = document.getElementById('tasksCount');
-                count.innerText = Math.max(0, parseInt(count.innerText) - 1);
+                if (count) count.innerText = Math.max(0, parseInt(count.innerText) - 1);
             } else {
                 alert('Ошибка при удалении');
             }

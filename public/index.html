@@ -223,6 +223,204 @@
                 transform: scale(0.95) translateY(75px);
             }
         }
+
+        /* Полупрозрачная кнопка снизу экрана */
+        .bottom-feed-btn {
+            position: fixed;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            background: rgba(30, 41, 59, 0.65);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #f8fafc;
+            padding: 12px 28px;
+            border-radius: 9999px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.25s ease;
+        }
+
+        .bottom-feed-btn:hover {
+            background: rgba(51, 65, 85, 0.85);
+            border-color: rgba(255, 255, 255, 0.3);
+            transform: translateX(-50%) translateY(-2px);
+            box-shadow: 0 15px 30px -5px rgba(0, 0, 0, 0.45);
+        }
+
+        /* Модальное окно списка заданий */
+        .feed-modal {
+            max-width: 650px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .feed-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        /* Переключатели сортировки */
+        .feed-tabs {
+            display: flex;
+            background: #0f172a;
+            padding: 4px;
+            border-radius: 10px;
+            border: 1px solid #334155;
+            gap: 4px;
+        }
+
+        .tab-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 6px 14px;
+            border-radius: 7px;
+            font-size: 0.9em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .tab-btn.active {
+            background: var(--surface);
+            color: #fff;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        /* Список заданий */
+        .feed-list {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-right: 5px;
+            margin-top: 10px;
+        }
+
+        .feed-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        .feed-list::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+
+        .feed-item {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            animation: fadeIn 0.25s ease;
+        }
+
+        .feed-item-text {
+            font-size: 1.05rem;
+            line-height: 1.45;
+            color: #f1f5f9;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .feed-item-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            padding-top: 10px;
+        }
+
+        .feed-time {
+            font-size: 0.8em;
+            color: var(--text-muted);
+        }
+
+        .feed-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        /* Кнопка лайка */
+        .vote-btn {
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid #475569;
+            color: var(--text-muted);
+            padding: 6px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9em;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        .vote-btn:hover {
+            border-color: #f43f5e;
+            color: #f43f5e;
+        }
+
+        .vote-btn.active {
+            background: rgba(244, 63, 94, 0.15);
+            border-color: #f43f5e;
+            color: #f43f5e;
+        }
+
+        /* Кнопка пожаловаться */
+        .report-btn {
+            background: rgba(30, 41, 59, 0.7);
+            border: 1px solid #475569;
+            color: var(--text-muted);
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 0.85em;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.2s;
+        }
+
+        .report-btn:hover {
+            border-color: #eab308;
+            color: #eab308;
+        }
+
+        .report-btn.active {
+            background: rgba(234, 179, 8, 0.15);
+            border-color: #eab308;
+            color: #facc15;
+            cursor: default;
+        }
+
+        .close-feed-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 4px;
+            line-height: 1;
+        }
+        .close-feed-btn:hover { color: #fff; }
     </style>
 </head>
 <body>
@@ -233,6 +431,34 @@
         <span style="font-size: 2.2rem; line-height: 1;">🐸</span>
         <span>Дать задание</span>
     </button>
+
+    <!-- Полупрозрачная кнопка списка заданий снизу -->
+    <button class="bottom-feed-btn" onclick="openFeedModal()">
+        <span>📋</span>
+        <span>Список заданий</span>
+    </button>
+
+    <!-- Модальное окно списка заданий -->
+    <div class="modal-overlay" id="feedModalOverlay" onclick="handleFeedOverlayClick(event)">
+        <div class="modal feed-modal">
+            <div class="feed-header">
+                <div>
+                    <h2 class="modal-title" style="margin-bottom: 2px;">Список заданий 🔥</h2>
+                    <p class="modal-subtitle" style="margin-bottom: 0;">Голосуй за лучшие идеи или предлагай свои</p>
+                </div>
+                <button class="close-feed-btn" onclick="closeFeedModal()">✕</button>
+            </div>
+
+            <div class="feed-tabs">
+                <button class="tab-btn active" id="tabNew" onclick="setFeedSort('new')">🕒 Свежие</button>
+                <button class="tab-btn" id="tabTop" onclick="setFeedSort('top')">🔥 Лучшие</button>
+            </div>
+
+            <div class="feed-list" id="feedList">
+                <div style="text-align: center; color: var(--text-muted); padding: 40px;">Загрузка...</div>
+            </div>
+        </div>
+    </div>
 
     <!-- Всплывающее окно -->
     <div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
@@ -375,6 +601,148 @@
             spawnFloatingTask();
             setInterval(spawnFloatingTask, 2000);
         });
+        // ЛОГИКА СПИСКА ЗАДАНИЙ, ГОЛОСОВАНИЯ И ЖАЛОБ
+        const feedModalOverlay = document.getElementById('feedModalOverlay');
+        const feedList = document.getElementById('feedList');
+        let currentFeedSort = 'new';
+
+        // Локальное кэширование действий пользователя в браузере (доп. защита от накрутки)
+        function getLocalActionIds(key) {
+            try { return JSON.parse(localStorage.getItem(key)) || []; }
+            catch(e) { return []; }
+        }
+
+        function addLocalActionId(key, id) {
+            const list = getLocalActionIds(key);
+            if (!list.includes(id)) {
+                list.push(id);
+                localStorage.setItem(key, JSON.stringify(list));
+            }
+        }
+
+        function removeLocalActionId(key, id) {
+            let list = getLocalActionIds(key);
+            list = list.filter(item => item !== id);
+            localStorage.setItem(key, JSON.stringify(list));
+        }
+
+        function openFeedModal() {
+            feedModalOverlay.classList.add('active');
+            loadFeed();
+        }
+
+        function closeFeedModal() {
+            feedModalOverlay.classList.remove('active');
+        }
+
+        function handleFeedOverlayClick(e) {
+            if (e.target === feedModalOverlay) closeFeedModal();
+        }
+
+        function setFeedSort(sort) {
+            if (currentFeedSort === sort) return;
+            currentFeedSort = sort;
+            document.getElementById('tabNew').classList.toggle('active', sort === 'new');
+            document.getElementById('tabTop').classList.toggle('active', sort === 'top');
+            loadFeed();
+        }
+
+        async function loadFeed() {
+            feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Загрузка...</div>';
+            try {
+                const res = await fetch(`/api/feed-tasks?sort=${currentFeedSort}`);
+                const tasks = await res.json();
+
+                const localVotes = getLocalActionIds('client_voted_tasks');
+                const localReports = getLocalActionIds('client_reported_tasks');
+
+                if (!tasks.length) {
+                    feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Заданий пока нет 😴</div>';
+                    return;
+                }
+
+                feedList.innerHTML = tasks.map(task => {
+                    const isVoted = task.hasVoted || localVotes.includes(task.id);
+                    const isReported = task.hasReported || localReports.includes(task.id);
+                    const date = new Date(task.created_at).toLocaleString('ru-RU', {
+                        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+                    });
+
+                    return `
+                    <div class="feed-item" id="feed-item-${task.id}">
+                        <div class="feed-item-text">${escapeHtml(task.text)}</div>
+                        <div class="feed-item-footer">
+                            <span class="feed-time">${date}</span>
+                            <div class="feed-actions">
+                                <button class="vote-btn ${isVoted ? 'active' : ''}" id="vote-btn-${task.id}" onclick="toggleVote(${task.id})">
+                                    <span>❤️</span>
+                                    <span id="vote-count-${task.id}">${task.likes_count || 0}</span>
+                                </button>
+                                <button class="report-btn ${isReported ? 'active' : ''}" id="report-btn-${task.id}" onclick="reportTask(${task.id})">
+                                    <span>⚠️</span>
+                                    <span id="report-count-${task.id}">${task.reports_count > 0 ? task.reports_count : 'Пожаловаться'}</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                feedList.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 40px;">Ошибка загрузки заданий</div>';
+            }
+        }
+
+        async function toggleVote(taskId) {
+            const btn = document.getElementById(`vote-btn-${taskId}`);
+            const countEl = document.getElementById(`vote-count-${taskId}`);
+
+            try {
+                const res = await fetch(`/api/tasks/${taskId}/vote`, { method: 'POST' });
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    countEl.innerText = data.likes_count;
+                    if (data.hasVoted) {
+                        btn.classList.add('active');
+                        addLocalActionId('client_voted_tasks', taskId);
+                    } else {
+                        btn.classList.remove('active');
+                        removeLocalActionId('client_voted_tasks', taskId);
+                    }
+                }
+            } catch (err) {
+                console.error('Ошибка при голосовании', err);
+            }
+        }
+
+        async function reportTask(taskId) {
+            const btn = document.getElementById(`report-btn-${taskId}`);
+            const countEl = document.getElementById(`report-count-${taskId}`);
+
+            if (btn.classList.contains('active')) {
+                alert('Вы уже пожаловались на это задание!');
+                return;
+            }
+
+            if (!confirm('Вы действительно хотите пожаловаться на это задание?')) return;
+
+            try {
+                const res = await fetch(`/api/tasks/${taskId}/report`, { method: 'POST' });
+                const data = await res.json();
+
+                if (res.ok && data.success) {
+                    btn.classList.add('active');
+                    countEl.innerText = data.reports_count;
+                    addLocalActionId('client_reported_tasks', taskId);
+                    alert('Жалоба отправлена администратору');
+                } else {
+                    alert(data.error || 'Ошибка при отправке жалобы');
+                }
+            } catch (err) {
+                alert('Ошибка соединения');
+            }
+        }
+        
         const taskInput = document.getElementById('taskInput');
         const submitBtn = document.getElementById('submitBtn');
         const statusMsg = document.getElementById('statusMsg');

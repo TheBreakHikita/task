@@ -708,6 +708,12 @@
     <script>
         const modalOverlay = document.getElementById('modalOverlay');
         const floatingContainer = document.getElementById('floatingContainer');
+        
+        // Определяем режим сразу в начале скрипта, чтобы избежать ошибки инициализации
+        const initialSavedMode = localStorage.getItem('cached_button_mode') || 'task';
+        let currentMode = initialSavedMode;     // Текущий режим сервера ('task' или 'punishment')
+        let currentFeedType = initialSavedMode; // Активная вкладка списка
+
         let backgroundTasks = [];
         let taskQueue = []; // Очередь не показанных заданий
 
@@ -822,11 +828,10 @@
                 }
             }
 
-            // Если свободное место не нашлось (например, экран перегружен)
+            // Если не удалось найти идеальную позицию, размещаем сверху или снизу экрана
             if (!positionFound) {
-                item.remove();
-                if (!customText) taskQueue.unshift(currentText);
-                return;
+                posX = Math.floor(Math.random() * Math.max(10, maxW));
+                posY = Math.random() > 0.5 ? 15 : Math.max(15, maxH - 15);
             }
 
             item.style.left = `${posX}px`;
@@ -851,9 +856,6 @@
         const feedModalOverlay = document.getElementById('feedModalOverlay');
         const feedList = document.getElementById('feedList');
         let currentFeedSort = 'top';
-        const initialSavedMode = localStorage.getItem('cached_button_mode') || 'task';
-        let currentMode = initialSavedMode;     // Текущий режим сервера
-        let currentFeedType = initialSavedMode; // 'task' или 'punishment'
         // Раздельный кэш: хранит списки заданий и наказаний независимо
         const feedCache = {
             task: null,

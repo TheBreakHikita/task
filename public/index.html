@@ -633,6 +633,23 @@
         <span id="bigBtnEmoji" style="font-size: 2.2rem; line-height: 1;">🐸</span>
         <span id="bigBtnText">Дать задание</span>
     </button>
+    <script>
+        // Предотвращаем мигание кнопки при загрузке: мгновенно применяем сохраненный режим
+        (function() {
+            try {
+                if (localStorage.getItem('cached_button_mode') === 'punishment') {
+                    const btn = document.getElementById('giveTaskBtn');
+                    const emoji = document.getElementById('bigBtnEmoji');
+                    const text = document.getElementById('bigBtnText');
+                    if (btn && emoji && text) {
+                        btn.classList.add('punishment-mode');
+                        emoji.innerText = '💀';
+                        text.innerText = 'Дать наказание';
+                    }
+                }
+            } catch(e) {}
+        })();
+    </script>
 
     <!-- Полупрозрачная кнопка списка заданий снизу -->
     <button class="bottom-feed-btn" onclick="openFeedModal()">
@@ -821,8 +838,11 @@
         let currentFeedSort = 'top';
         let currentFeedType = 'task'; // 'task' или 'punishment'
         let currentMode = 'task';     // Текущий режим сервера
-        let currentFeedData = []; // Локальный кэш списка
-        let hasInitialLoaded = false;
+        // Раздельный кэш: хранит списки заданий и наказаний независимо
+        const feedCache = {
+            task: null,
+            punishment: null
+        };
         let eventSource = null;
 
         // Локальное кэширование действий пользователя
@@ -865,9 +885,11 @@
         function openFeedModal() {
             document.body.classList.add('modal-open');
             feedModalOverlay.classList.add('active');
-            // Если данные уже есть — не дергаем повторно надписи и скелетоны
-            if (!hasInitialLoaded) {
+            // Загружаем с сервера только если для выбранной вкладки данных еще нет
+            if (!feedCache[currentFeedType]) {
                 loadFeed(true);
+            } else {
+                sortAndRenderFeed();
             }
         }
 
@@ -941,18 +963,21 @@
         }
 
         function sortAndRenderFeed() {
+            const list = feedCache[currentFeedType] || [];
+
             if (currentFeedSort === 'top') {
-                currentFeedData.sort((a, b) => (b.likes_count || 0) - (a.likes_count || 0) || new Date(b.created_at) - new Date(a.created_at));
+                list.sort((a, b) => (b.likes_count || 0) - (a.likes_count || 0) || new Date(b.created_at) - new Date(a.created_at));
             } else {
-                currentFeedData.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+                list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
             }
 
-            if (!currentFeedData.length) {
-                feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Заданий пока нет 😴</div>';
+            if (!list.length) {
+                const emptyText = currentFeedType === 'punishment' ? 'Наказаний пока нет 💀' : 'Заданий пока нет 😴';
+                feedList.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 40px;">${emptyText}</div>`;
                 return;
             }
 
-            feedList.innerHTML = currentFeedData.map(createFeedCardHtml).join('');
+            feedList.innerHTML = list.map(createFeedCardHtml).join('');
         }
 
         function switchFeedType(type) {
@@ -960,7 +985,13 @@
             currentFeedType = type;
             document.getElementById('feedTypeTaskBtn').classList.toggle('active', type === 'task');
             document.getElementById('feedTypePunishmentBtn').classList.toggle('active', type === 'punishment');
-            loadFeed(true);
+
+            // Если список уже загружен в память — мгновенно показываем его БЕЗ запроса к серверу и БЕЗ скелетонов
+            if (feedCache[currentFeedType]) {
+                sortAndRenderFeed();
+            } else {
+                loadFeed(true);
+            }
         }
 
         async function loadFeed(isInitial = false) {
@@ -974,11 +1005,10 @@
 
                 if (!res.ok) throw new Error(data.error || 'Ошибка загрузки');
 
-                currentFeedData = Array.isArray(data) ? data : [];
-                hasInitialLoaded = true;
+                feedCache[currentFeedType] = Array.isArray(data) ? data : [];
 
                 const localReports = getLocalActionIds('client_reported_tasks');
-                currentFeedData.forEach(task => {
+                feedCache[currentFeedType].forEach(task => {
                     if (!task.hasReported && localReports.includes(task.id)) {
                         removeLocalActionId('client_reported_tasks', task.id);
                     }
@@ -987,9 +1017,7 @@
                 sortAndRenderFeed();
             } catch (err) {
                 console.error('Ошибка ленты:', err);
-                if (!hasInitialLoaded) {
-                    feedList.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 40px;">Ошибка: ${escapeHtml(err.message)}</div>`;
-                }
+                feedList.innerHTML = `<div style="text-align: center; color: #ef4444; padding: 40px;">Ошибка: ${escapeHtml(err.message)}</div>`;
             }
         }
 
@@ -1028,37 +1056,46 @@
 
         // Обработка нового задания/наказания
         function handleRealtimeNewTask(task) {
-            const taskType = task.type || 'task';
-            if (taskType !== currentFeedType) return;
-            if (currentFeedData.some(t => t.id === task.id)) return;
+            const taskType = task.type === 'punishment' ? 'punishment' : 'task';
 
-            currentFeedData.push(task);
-
-            // Если список был пуст — очищаем заглушку
-            if (feedList.children.length === 1 && !feedList.children[0].classList.contains('feed-item')) {
-                feedList.innerHTML = '';
+            // Если список этого типа уже был загружен в память — обновляем кэш
+            if (feedCache[taskType]) {
+                if (!feedCache[taskType].some(t => t.id === task.id)) {
+                    feedCache[taskType].push(task);
+                }
             }
 
-            const tempDiv = document.createElement('div');
-            tempDiv.innerHTML = createFeedCardHtml(task);
-            const cardEl = tempDiv.firstElementChild;
-            cardEl.classList.add('highlight-live');
+            // Если прямо сейчас открыта именно эта вкладка — отображаем карточку в интерфейсе
+            if (taskType === currentFeedType) {
+                if (feedList.children.length === 1 && !feedList.children[0].classList.contains('feed-item')) {
+                    feedList.innerHTML = '';
+                }
 
-            if (currentFeedSort === 'new') {
-                // В режиме "Свежие" новое задание всегда мгновенно падает на самый верх
-                feedList.prepend(cardEl);
-            } else {
-                // В режиме "Лучшие" новое задание с 0 лайков добавляется в конец
-                feedList.appendChild(cardEl);
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = createFeedCardHtml(task);
+                const cardEl = tempDiv.firstElementChild;
+                cardEl.classList.add('highlight-live');
+
+                if (currentFeedSort === 'new') {
+                    feedList.prepend(cardEl);
+                } else {
+                    feedList.appendChild(cardEl);
+                }
             }
         }
 
         // Обработка изменения голосов (лайков)
         function handleRealtimeVoteUpdate({ id, likes_count }) {
-            const task = currentFeedData.find(t => t.id === id);
-            if (task) {
-                task.likes_count = likes_count;
-            }
+            let taskFound = null;
+            ['task', 'punishment'].forEach(type => {
+                if (feedCache[type]) {
+                    const item = feedCache[type].find(t => t.id === id);
+                    if (item) {
+                        item.likes_count = likes_count;
+                        if (type === currentFeedType) taskFound = item;
+                    }
+                }
+            });
 
             const countEl = document.getElementById(`vote-count-${id}`);
             if (countEl) countEl.innerText = likes_count;
@@ -1066,20 +1103,17 @@
             const card = document.getElementById(`feed-item-${id}`);
             if (card) {
                 card.setAttribute('data-likes', likes_count);
-
-                // Если сортировка "🔥 Лучшие" — перемещаем карточку наверх, если она обогнала другие
                 if (currentFeedSort === 'top') {
-                    reorderCardInTopFeed(card, likes_count, task ? new Date(task.created_at).getTime() : 0);
+                    reorderCardInTopFeed(card, likes_count, taskFound ? new Date(taskFound.created_at).getTime() : 0);
                 }
             }
         }
 
-        // Плавная перестановка карточки на её правильное место в топе (как вверх, так и вниз)
+        // Плавная перестановка карточки на её правильное место в топе
         function reorderCardInTopFeed(card, likes, taskTime) {
             const items = Array.from(feedList.querySelectorAll('.feed-item'));
             if (!items.includes(card)) return;
 
-            // Находим карточку, перед которой должно стоять текущее задание
             let target = null;
             for (const item of items) {
                 if (item === card) continue;
@@ -1087,7 +1121,6 @@
                 const iLikes = parseInt(item.getAttribute('data-likes') || '0', 10);
                 const iTime = parseInt(item.getAttribute('data-time') || '0', 10);
 
-                // Задание выше, если у него больше лайков, либо при равенстве лайков оно создано позже
                 const isHigher = (likes > iLikes) || (likes === iLikes && taskTime > iTime);
                 if (isHigher) {
                     target = item;
@@ -1096,22 +1129,18 @@
             }
 
             let moved = false;
-
             if (target) {
-                // Если позиция изменилась, вставляем перед найденной карточкой
                 if (card.nextElementSibling !== target) {
                     feedList.insertBefore(card, target);
                     moved = true;
                 }
             } else {
-                // Если задание уступает всем по лайкам — опускаем в самый конец списка
                 if (card !== feedList.lastElementChild) {
                     feedList.appendChild(card);
                     moved = true;
                 }
             }
 
-            // Перезапуск эффекта анимации при смене позиции
             if (moved) {
                 card.classList.remove('highlight-live');
                 void card.offsetWidth;
@@ -1121,8 +1150,12 @@
 
         // Обработка изменения репортов
         function handleRealtimeReportUpdate({ id, reports_count }) {
-            const task = currentFeedData.find(t => t.id === id);
-            if (task) task.reports_count = reports_count;
+            ['task', 'punishment'].forEach(type => {
+                if (feedCache[type]) {
+                    const item = feedCache[type].find(t => t.id === id);
+                    if (item) item.reports_count = reports_count;
+                }
+            });
 
             const countEl = document.getElementById(`report-count-${id}`);
             if (countEl) countEl.innerText = reports_count > 0 ? reports_count : 'Пожаловаться';
@@ -1130,12 +1163,19 @@
 
         // Обработка удаления задания админом
         function handleRealtimeDelete({ id }) {
-            currentFeedData = currentFeedData.filter(t => t.id !== id);
+            ['task', 'punishment'].forEach(type => {
+                if (feedCache[type]) {
+                    feedCache[type] = feedCache[type].filter(t => t.id !== id);
+                }
+            });
+
             const card = document.getElementById(`feed-item-${id}`);
             if (card) card.remove();
 
-            if (!currentFeedData.length) {
-                feedList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">Заданий пока нет 😴</div>';
+            const currentList = feedCache[currentFeedType] || [];
+            if (!currentList.length) {
+                const emptyText = currentFeedType === 'punishment' ? 'Наказаний пока нет 💀' : 'Заданий пока нет 😴';
+                feedList.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 40px;">${emptyText}</div>`;
             }
         }
 
@@ -1204,6 +1244,7 @@
         function updateButtonModeUI(mode) {
             currentMode = mode || 'task';
             const btn = document.getElementById('giveTaskBtn');
+            localStorage.setItem('cached_button_mode', currentMode);
             const emojiEl = document.getElementById('bigBtnEmoji');
             const textEl = document.getElementById('bigBtnText');
             const inputTitle = document.getElementById('inputModalTitle');
@@ -1321,7 +1362,7 @@
                     statusMsg.style.color = '#4ade80';
                     statusMsg.innerText = currentMode === 'punishment' 
                         ? '✅ Наказание отправлено блогеру!' 
-                        : '✅ Задание отправлено блогеру!';S
+                        : '✅ Задание отправлено блогеру!';
                     localStorage.setItem('last_task_sent_time', Date.now().toString());
                     
                     // Сразу добавляем новое задание в общий пул и в начало очереди

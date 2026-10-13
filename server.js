@@ -132,6 +132,37 @@ app.get('/api/submissions-status', (req, res) => {
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+// Сохранение и загрузка глобальных настроек из Supabase (чтобы не сбрасывались при засыпании сервера)
+async function saveSettings() {
+    try {
+        await supabase.from('app_settings').upsert({
+            key: 'main',
+            value: {
+                submissionsEnabled,
+                buttonMode,
+                keepAliveConfig
+            }
+        });
+    } catch (e) {
+        console.error('Ошибка сохранения настроек в Supabase:', e.message);
+    }
+}
+
+async function loadSettingsFromDb() {
+    try {
+        const { data } = await supabase.from('app_settings').select('value').eq('key', 'main').maybeSingle();
+        if (data && data.value) {
+            if (typeof data.value.submissionsEnabled !== 'undefined') submissionsEnabled = data.value.submissionsEnabled;
+            if (data.value.buttonMode) buttonMode = data.value.buttonMode;
+            if (data.value.keepAliveConfig) keepAliveConfig = { ...keepAliveConfig, ...data.value.keepAliveConfig };
+            console.log('✅ Настройки админки успешно восстановлены из Supabase');
+        }
+    } catch (e) {
+        console.warn('Не удалось загрузить настройки из БД (будут использованы дефолтные):', e.message);
+    }
+}
+loadSettingsFromDb();
+
 // Вспомогательная функция извлечения чистого IP
 function getClientIp(req) {
     const forwarded = req.headers['x-forwarded-for'];
@@ -388,10 +419,11 @@ app.get('/api/admin/mode', authMiddleware, (req, res) => {
     res.json({ mode: buttonMode });
 });
 
-app.post('/api/admin/mode', authMiddleware, (req, res) => {
+app.post('/api/admin/mode', authMiddleware, async (req, res) => {
     const { mode } = req.body;
     if (mode === 'task' || mode === 'punishment') {
         buttonMode = mode;
+        await saveSettings();
         broadcastFeedEvent('mode_toggle', { mode: buttonMode });
     }
     res.json({ success: true, mode: buttonMode });
@@ -402,10 +434,11 @@ app.get('/api/admin/submissions-status', authMiddleware, (req, res) => {
     res.json({ enabled: submissionsEnabled });
 });
 
-app.post('/api/admin/submissions-toggle', authMiddleware, (req, res) => {
+app.post('/api/admin/submissions-toggle', authMiddleware, async (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled !== 'undefined') {
         submissionsEnabled = Boolean(enabled);
+        await saveSettings();
         broadcastFeedEvent('submissions_toggle', { enabled: submissionsEnabled });
     }
     res.json({ success: true, enabled: submissionsEnabled });
@@ -497,7 +530,7 @@ app.get('/api/admin/keepalive', authMiddleware, (req, res) => {
 });
 
 // 10. Обновить статус / расписание Анти-сна (только для админа)
-app.post('/api/admin/keepalive', authMiddleware, (req, res) => {
+app.post('/api/admin/keepalive', authMiddleware, async (req, res) => {
     const { enabled, useSchedule, mode, startTime, endTime, timezone } = req.body;
 
     if (typeof enabled !== 'undefined') keepAliveConfig.enabled = Boolean(enabled);
@@ -506,6 +539,8 @@ app.post('/api/admin/keepalive', authMiddleware, (req, res) => {
     if (startTime) keepAliveConfig.startTime = startTime;
     if (endTime) keepAliveConfig.endTime = endTime;
     if (timezone) keepAliveConfig.timezone = timezone;
+
+    await saveSettings();
 
     if (isKeepAliveActiveNow()) {
         pingSelf();

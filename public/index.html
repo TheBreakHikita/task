@@ -57,6 +57,14 @@
             transform: scale(0.98);
         }
 
+        .big-btn.disabled {
+            background: #475569 !important;
+            box-shadow: none !important;
+            cursor: not-allowed !important;
+            transform: none !important;
+            opacity: 0.65 !important;
+        }
+
         /* Модальное окно */
         .modal-overlay {
             position: fixed;
@@ -584,7 +592,7 @@
 
     <!-- Большая кнопка по центру -->
     <div id="floatingContainer"></div>
-    <button class="big-btn" onclick="openModal()">
+    <button class="big-btn" id="giveTaskBtn" onclick="openModal()">
         <span style="font-size: 2.2rem; line-height: 1;">🐸</span>
         <span>Дать задание</span>
     </button>
@@ -945,6 +953,8 @@
                     if (type === 'new_task') {
                         handleRealtimeNewTask(payload);
                     } else if (type === 'vote_update') {
+                    } else if (type === 'submissions_toggle') {
+                        updateSubmissionsUI(payload.enabled);
                         handleRealtimeVoteUpdate(payload);
                     } else if (type === 'report_update') {
                         handleRealtimeReportUpdate(payload);
@@ -1132,7 +1142,35 @@
         const submitBtn = document.getElementById('submitBtn');
         const statusMsg = document.getElementById('statusMsg');
 
+        let isSubmissionsEnabled = true;
+
+        function updateSubmissionsUI(enabled) {
+            isSubmissionsEnabled = enabled;
+            const btn = document.getElementById('giveTaskBtn');
+            if (!btn) return;
+
+            if (enabled) {
+                btn.classList.remove('disabled');
+                btn.title = '';
+            } else {
+                btn.classList.add('disabled');
+                btn.title = 'Приём заданий временно приостановлен';
+            }
+        }
+
+        async function fetchSubmissionsStatus() {
+            try {
+                const res = await fetch('/api/submissions-status');
+                if (res.ok) {
+                    const data = await res.json();
+                    updateSubmissionsUI(data.enabled);
+                }
+            } catch (e) {}
+        }
+        fetchSubmissionsStatus();
+
         function openModal() {
+            if (!isSubmissionsEnabled) return;
             document.body.classList.add('modal-open');
             modalOverlay.classList.add('active');
             taskInput.focus();

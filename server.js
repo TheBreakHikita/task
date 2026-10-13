@@ -9,14 +9,68 @@ let sseClients = [];
 
 // Кэш для защиты от спама: хранит временную метку последней отправки задания по IP
 const taskRateLimitMap = new Map();
-// --- Механизм Анти-сна (Keep-Alive) ---
-let keepAliveEnabled = true; // По умолчанию включен
+let submissionsEnabled = true;
+let keepAliveConfig = {
+    enabled: true,              // Главный переключатель
+    useSchedule: false,         // Использовать ли расписание
+    mode: 'active_between',     // 'active_between' (работать от и до) или 'sleep_between' (спать/отключаться от и до)
+    startTime: '08:00',         // Время начала (ЧЧ:ММ)
+    endTime: '23:00',           // Время окончания (ЧЧ:ММ)
+    timezone: 'Europe/Moscow'   // Часовой пояс
+};
+
 let lastKeepAliveTime = null;
 let detectedBaseUrl = process.env.RENDER_EXTERNAL_URL || process.env.APP_URL || null;
 
-// Эмитация активности (HTTP-запрос самому себе)
+// Проверка активности анти-сна в текущую минуту с учетом расписания
+function isKeepAliveActiveNow() {
+    if (!keepAliveConfig.enabled) return false;
+    if (!keepAliveConfig.useSchedule) return true;
+
+    let nowHours, nowMinutes;
+    try {
+        const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: keepAliveConfig.timezone || 'Europe/Moscow',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).formatToParts(new Date());
+        nowHours = parseInt(parts.find(p => p.type === 'hour').value, 10);
+        nowMinutes = parseInt(parts.find(p => p.type === 'minute').value, 10);
+    } catch (e) {
+        const now = new Date();
+        nowHours = now.getHours();
+        nowMinutes = now.getMinutes();
+    }
+
+    const currentTotalMin = nowHours * 60 + nowMinutes;
+    const [startH, startM] = (keepAliveConfig.startTime || '00:00').split(':').map(Number);
+    const [endH, endM] = (keepAliveConfig.endTime || '23:59').split(':').map(Number);
+    const startTotalMin = startH * 60 + startM;
+    const endTotalMin = endH * 60 + endM;
+
+    // Проверка интервала (поддерживает переход через полночь, например с 23:00 до 07:00)
+    let inInterval = false;
+    if (startTotalMin <= endTotalMin) {
+        inInterval = currentTotalMin >= startTotalMin && currentTotalMin < endTotalMin;
+    } else {
+        inInterval = currentTotalMin >= startTotalMin || currentTotalMin < endTotalMin;
+    }
+
+    // Если режим 'sleep_between' — в интервале спим (выключен), вне интервала активны
+    if (keepAliveConfig.mode === 'sleep_between') {
+        return !inInterval;
+    }
+    // Если режим 'active_between' — активны строго внутри интервала
+    return inInterval;
+}
+
+// Имитация активности (HTTP-запрос самому себе)
 async function pingSelf() {
-    if (!keepAliveEnabled) return;
+    if (!isKeepAliveActiveNow()) {
+        console.log(`[Keep-Alive] ⏸️ Пинг пропущен (отключен или спит по расписанию: ${new Date().toLocaleTimeString('ru-RU')})`);
+        return;
+    }
     const targetUrl = detectedBaseUrl || `http://localhost:${PORT}`;
     try {
         await fetch(`${targetUrl}/api/ping`);
@@ -70,6 +124,9 @@ app.use((req, res, next) => {
 
 // Легкий эндпоинт для самопинга
 app.get('/api/ping', (req, res) => res.send('pong'));
+app.get('/api/submissions-status', (req, res) => {
+    res.json({ enabled: submissionsEnabled });
+});
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -87,6 +144,9 @@ function getClientIp(req) {
 // 1. Отправка нового задания пользователем
 app.post('/api/tasks', async (req, res) => {
     const { text } = req.body;
+    if (!submissionsEnabled) {
+        return res.status(403).json({ error: 'Приём заданий временно приостановлен' });
+    }
     if (!text || text.trim().length === 0) {
         return res.status(400).json({ error: 'Текст задания не может быть пустым' });
     }
@@ -279,6 +339,47 @@ function authMiddleware(req, res, next) {
     next();
 }
 
+// Добавление задания вручную администратором
+app.post('/api/admin/tasks', authMiddleware, async (req, res) => {
+    const { text } = req.body;
+    if (!text || text.trim().length === 0) {
+        return res.status(400).json({ error: 'Текст задания не может быть пустым' });
+    }
+
+    const { data: inserted, error } = await supabase.from('tasks').insert([
+        { text: text.trim(), ip: 'Администратор', likes_count: 0, reports_count: 0 }
+    ]).select().single();
+
+    if (error) {
+        return res.status(500).json({ error: error.message });
+    }
+
+    // Рассылаем всем открытым вкладкам новое задание
+    broadcastFeedEvent('new_task', {
+        id: inserted.id,
+        text: inserted.text,
+        created_at: inserted.created_at,
+        likes_count: inserted.likes_count,
+        reports_count: inserted.reports_count
+    });
+
+    res.json({ success: true, task: inserted });
+});
+
+// Переключение и получение статуса кнопки приёма заданий (админ)
+app.get('/api/admin/submissions-status', authMiddleware, (req, res) => {
+    res.json({ enabled: submissionsEnabled });
+});
+
+app.post('/api/admin/submissions-toggle', authMiddleware, (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled !== 'undefined') {
+        submissionsEnabled = Boolean(enabled);
+        broadcastFeedEvent('submissions_toggle', { enabled: submissionsEnabled });
+    }
+    res.json({ success: true, enabled: submissionsEnabled });
+});
+
 // 3. Получение списка заданий (только для админа)
 app.get('/api/tasks', authMiddleware, async (req, res) => {
     const { data, error } = await supabase
@@ -354,23 +455,36 @@ app.delete('/api/admin/blacklist/:ip', authMiddleware, async (req, res) => {
     res.json({ success: true });
 });
 
-// 9. Получить статус Анти-сна (только для админа)
+// 9. Получить статус и конфигурацию Анти-сна (только для админа)
 app.get('/api/admin/keepalive', authMiddleware, (req, res) => {
     res.json({
-        enabled: keepAliveEnabled,
+        ...keepAliveConfig,
+        isActiveNow: isKeepAliveActiveNow(),
         lastPing: lastKeepAliveTime,
         url: detectedBaseUrl
     });
 });
 
-// 10. Переключить статус Анти-сна (только для админа)
+// 10. Обновить статус / расписание Анти-сна (только для админа)
 app.post('/api/admin/keepalive', authMiddleware, (req, res) => {
-    const { enabled } = req.body;
-    keepAliveEnabled = Boolean(enabled);
-    if (keepAliveEnabled) {
-        pingSelf(); // Пингуем сразу при ручном включении
+    const { enabled, useSchedule, mode, startTime, endTime, timezone } = req.body;
+
+    if (typeof enabled !== 'undefined') keepAliveConfig.enabled = Boolean(enabled);
+    if (typeof useSchedule !== 'undefined') keepAliveConfig.useSchedule = Boolean(useSchedule);
+    if (mode) keepAliveConfig.mode = mode;
+    if (startTime) keepAliveConfig.startTime = startTime;
+    if (endTime) keepAliveConfig.endTime = endTime;
+    if (timezone) keepAliveConfig.timezone = timezone;
+
+    if (isKeepAliveActiveNow()) {
+        pingSelf();
     }
-    res.json({ success: true, enabled: keepAliveEnabled });
+
+    res.json({
+        success: true,
+        config: keepAliveConfig,
+        isActiveNow: isKeepAliveActiveNow()
+    });
 });
 
 const PORT = process.env.PORT || 3000;

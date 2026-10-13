@@ -26,6 +26,8 @@
         
         .btn { padding: 10px 18px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9em; }
         .btn-primary { background: var(--accent); color: white; }
+        .btn-success { background: #10b981; color: white; }
+        .btn-success:hover { background: #059669; }
         .btn-danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
         .btn-danger:hover { background: var(--danger); color: white; }
 
@@ -205,6 +207,47 @@
         }
         input:checked + .slider { background-color: #10b981; }
         input:checked + .slider:before { transform: translateX(20px); }
+
+        .btn-schedule {
+            background: #1e293b;
+            border: 1px solid var(--border);
+            color: #94a3b8;
+            padding: 5px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8em;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            transition: 0.2s;
+        }
+        .btn-schedule:hover { color: #fff; border-color: #64748b; }
+        .btn-schedule.active { border-color: #38bdf8; color: #38bdf8; }
+
+        /* Модальное окно расписания */
+        #scheduleModal {
+            position: fixed; inset: 0;
+            background: rgba(15, 23, 42, 0.8);
+            display: none; align-items: center; justify-content: center;
+            z-index: 1000;
+        }
+        .schedule-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            width: 100%; max-width: 440px;
+            padding: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 0.85em; color: var(--text-muted); margin-bottom: 6px; }
+        .form-control {
+            width: 100%; padding: 10px 12px;
+            background: #0f172a; border: 1px solid var(--border);
+            border-radius: 8px; color: white; font-size: 0.95em;
+        }
+        .time-row { display: flex; gap: 12px; }
+        .time-row .form-group { flex: 1; }
     </style>
 </head>
 <body>
@@ -226,7 +269,19 @@
                 <p style="color: var(--text-muted);">Заданий в базе: <span id="tasksCount" style="color: var(--accent); font-weight: bold;">0</span></p>
             </div>
             <div class="actions" style="align-items: center; flex-wrap: wrap;">
-                <!-- Ползунок Анти-сна -->
+                <!-- Ползунок Анти-сна и кнопка расписания -->
+                 <!-- Тумблер вкл/выкл приёма заданий -->
+                <div class="keepalive-panel">
+                    <span style="font-size: 0.85em; font-weight: 600;">Приём заданий:</span>
+                    <label class="switch">
+                        <input type="checkbox" id="submissionsToggle" onchange="toggleSubmissions(this.checked)">
+                        <span class="slider"></span>
+                    </label>
+                    <span id="submissionsStatusText" style="font-size: 0.8em; color: var(--text-muted);">...</span>
+                </div>
+
+                <!-- Кнопка создания задания вручную -->
+                <button class="btn btn-success" onclick="openAddTaskModal()">➕ Создать задание</button>
                 <div class="keepalive-panel">
                     <span style="font-size: 0.85em; font-weight: 600;">⚡ Анти-сон (10м)</span>
                     <label class="switch">
@@ -234,6 +289,7 @@
                         <span class="slider"></span>
                     </label>
                     <span id="keepAliveStatusText" style="font-size: 0.75em; color: var(--text-muted);">...</span>
+                    <button type="button" class="btn-schedule" id="scheduleBtn" onclick="openScheduleModal()">⏰ Расписание</button>
                 </div>
 
                 <button class="btn btn-primary" onclick="refreshCurrentTab()">🔄 Обновить</button>
@@ -259,6 +315,66 @@
 
             <h2 style="margin: 35px 0 15px; font-size: 1.3em;">🚫 Заблокированные IP-адреса</h2>
             <div id="blacklistContainer"></div>
+        </div>
+    </div>
+
+    <!-- Модальное окно ручного добавления задания -->
+    <div id="addTaskModal" style="position: fixed; inset: 0; background: rgba(15, 23, 42, 0.8); display: none; align-items: center; justify-content: center; z-index: 1000;" onclick="if(event.target === this) closeAddTaskModal()">
+        <div class="schedule-box">
+            <h3 style="margin-bottom: 8px;">➕ Добавить задание вручную</h3>
+            <p style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 15px;">Дата и время сформируются текущим моментом добавления.</p>
+            <div class="form-group">
+                <textarea id="adminTaskText" class="form-control" style="height: 120px; resize: vertical;" placeholder="Введите текст задания..."></textarea>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+                <button class="btn btn-danger" onclick="closeAddTaskModal()" style="padding: 8px 16px;">Отмена</button>
+                <button class="btn btn-success" onclick="createAdminTask()" style="padding: 8px 16px;">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модальное окно расписания Анти-сна -->
+    <div id="scheduleModal" onclick="if(event.target === this) closeScheduleModal()">
+        <div class="schedule-box">
+            <h3 style="margin-bottom: 8px;">⏰ Расписание анти-сна</h3>
+            <p style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 20px;">Настройте интервал, когда сервер должен работать или уходить в сон.</p>
+
+            <div class="form-group" style="display: flex; align-items: center; gap: 10px;">
+                <label class="switch" style="margin: 0;">
+                    <input type="checkbox" id="modalUseSchedule">
+                    <span class="slider"></span>
+                </label>
+                <span style="font-weight: 600; font-size: 0.95em;">Включить работу по расписанию</span>
+            </div>
+
+            <div class="form-group">
+                <label>Режим работы интервала</label>
+                <select id="modalScheduleMode" class="form-control">
+                    <option value="active_between">⚡ Работать только от и до (в остальное время спать)</option>
+                    <option value="sleep_between">🌙 Отключаться (спать) от и до (в остальное время работать)</option>
+                </select>
+            </div>
+
+            <div class="time-row">
+                <div class="form-group">
+                    <label>Время «С»</label>
+                    <input type="time" id="modalStartTime" class="form-control" value="08:00">
+                </div>
+                <div class="form-group">
+                    <label>Время «По»</label>
+                    <input type="time" id="modalEndTime" class="form-control" value="23:00">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Часовой пояс</label>
+                <input type="text" id="modalTimezone" class="form-control" placeholder="Europe/Moscow">
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;">
+                <button class="btn btn-danger" onclick="closeScheduleModal()" style="padding: 8px 16px;">Отмена</button>
+                <button class="btn btn-primary" onclick="saveSchedule()" style="padding: 8px 16px;">Сохранить</button>
+            </div>
         </div>
     </div>
 
@@ -297,7 +413,86 @@
             document.getElementById('adminContainer').style.display = 'block';
             loadTasks();
             loadKeepAliveStatus();
+            loadSubmissionsStatus();
         }
+
+        // Загрузка и переключение статуса кнопки "Дать задание"
+        async function loadSubmissionsStatus() {
+            try {
+                const res = await fetch('/api/admin/submissions-status', {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('submissionsToggle').checked = data.enabled;
+                document.getElementById('submissionsStatusText').innerText = data.enabled ? 'Вкл' : 'Выкл';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function toggleSubmissions(enabled) {
+            const statusEl = document.getElementById('submissionsStatusText');
+            statusEl.innerText = 'Сохранение...';
+            try {
+                const res = await fetch('/api/admin/submissions-toggle', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ enabled })
+                });
+                if (res.ok) {
+                    statusEl.innerText = enabled ? 'Вкл' : 'Выкл';
+                } else {
+                    alert('Ошибка при изменении статуса приёма заданий');
+                }
+            } catch (e) {
+                alert('Ошибка связи с сервером');
+            }
+        }
+
+        // Модальное окно ручного добавления задания
+        function openAddTaskModal() {
+            document.getElementById('adminTaskText').value = '';
+            document.getElementById('addTaskModal').style.display = 'flex';
+            document.getElementById('adminTaskText').focus();
+        }
+
+        function closeAddTaskModal() {
+            document.getElementById('addTaskModal').style.display = 'none';
+        }
+
+        async function createAdminTask() {
+            const text = document.getElementById('adminTaskText').value.trim();
+            if (!text) {
+                return alert('Введите текст задания!');
+            }
+
+            try {
+                const res = await fetch('/api/admin/tasks', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ text })
+                });
+
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    closeAddTaskModal();
+                    if (currentTab === 'tasks') loadTasks();
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Не удалось создать задание'));
+                }
+            } catch (e) {
+                alert('Ошибка связи с сервером');
+            }
+        }
+
+        let currentKeepAliveConfig = null;
 
         async function loadKeepAliveStatus() {
             try {
@@ -306,12 +501,27 @@
                 });
                 if (!res.ok) return;
                 const data = await res.json();
+                currentKeepAliveConfig = data;
+
                 document.getElementById('keepAliveToggle').checked = data.enabled;
                 
-                const timeText = data.lastPing ? new Date(data.lastPing).toLocaleTimeString('ru-RU') : 'еще не был';
-                document.getElementById('keepAliveStatusText').innerText = data.enabled 
-                    ? `Вкл (пинг: ${timeText})` 
-                    : 'Выкл';
+                // Подсветка кнопки расписания, если оно включено
+                const schedBtn = document.getElementById('scheduleBtn');
+                if (schedBtn) {
+                    schedBtn.classList.toggle('active', Boolean(data.useSchedule));
+                }
+
+                const timeText = data.lastPing ? new Date(data.lastPing).toLocaleTimeString('ru-RU') : 'нет';
+
+                if (!data.enabled) {
+                    document.getElementById('keepAliveStatusText').innerText = 'Выкл';
+                } else if (data.useSchedule) {
+                    document.getElementById('keepAliveStatusText').innerText = data.isActiveNow 
+                        ? `Вкл (по расписанию, пинг: ${timeText})` 
+                        : `Спит по расписанию`;
+                } else {
+                    document.getElementById('keepAliveStatusText').innerText = `Вкл (пинг: ${timeText})`;
+                }
             } catch (e) {
                 console.error('Ошибка загрузки статуса анти-сна', e);
             }
@@ -333,6 +543,51 @@
                     loadKeepAliveStatus();
                 } else {
                     alert('Не удалось изменить статус');
+                }
+            } catch (e) {
+                alert('Ошибка соединения с сервером');
+            }
+        }
+
+        function openScheduleModal() {
+            if (currentKeepAliveConfig) {
+                document.getElementById('modalUseSchedule').checked = Boolean(currentKeepAliveConfig.useSchedule);
+                document.getElementById('modalScheduleMode').value = currentKeepAliveConfig.mode || 'active_between';
+                document.getElementById('modalStartTime').value = currentKeepAliveConfig.startTime || '08:00';
+                document.getElementById('modalEndTime').value = currentKeepAliveConfig.endTime || '23:00';
+                document.getElementById('modalTimezone').value = currentKeepAliveConfig.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow';
+            } else {
+                document.getElementById('modalTimezone').value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Moscow';
+            }
+            document.getElementById('scheduleModal').style.display = 'flex';
+        }
+
+        function closeScheduleModal() {
+            document.getElementById('scheduleModal').style.display = 'none';
+        }
+
+        async function saveSchedule() {
+            const useSchedule = document.getElementById('modalUseSchedule').checked;
+            const mode = document.getElementById('modalScheduleMode').value;
+            const startTime = document.getElementById('modalStartTime').value;
+            const endTime = document.getElementById('modalEndTime').value;
+            const timezone = document.getElementById('modalTimezone').value.trim() || 'Europe/Moscow';
+
+            try {
+                const res = await fetch('/api/admin/keepalive', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ useSchedule, mode, startTime, endTime, timezone })
+                });
+
+                if (res.ok) {
+                    closeScheduleModal();
+                    loadKeepAliveStatus();
+                } else {
+                    alert('Ошибка при сохранении расписания');
                 }
             } catch (e) {
                 alert('Ошибка соединения с сервером');

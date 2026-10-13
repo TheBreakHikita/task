@@ -10,6 +10,7 @@ let sseClients = [];
 // Кэш для защиты от спама: хранит временную метку последней отправки задания по IP
 const taskRateLimitMap = new Map();
 let submissionsEnabled = true;
+let buttonMode = 'task'; // 'task' (Задания) или 'punishment' (Наказания)
 let keepAliveConfig = {
     enabled: true,              // Главный переключатель
     useSchedule: false,         // Использовать ли расписание
@@ -125,7 +126,7 @@ app.use((req, res, next) => {
 // Легкий эндпоинт для самопинга
 app.get('/api/ping', (req, res) => res.send('pong'));
 app.get('/api/submissions-status', (req, res) => {
-    res.json({ enabled: submissionsEnabled });
+    res.json({ enabled: submissionsEnabled, mode: buttonMode });
 });
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
@@ -143,7 +144,8 @@ function getClientIp(req) {
 
 // 1. Отправка нового задания пользователем
 app.post('/api/tasks', async (req, res) => {
-    const { text } = req.body;
+    const { text, type } = req.body;
+    const taskType = (type === 'punishment' || buttonMode === 'punishment') ? 'punishment' : 'task';
     if (!submissionsEnabled) {
         return res.status(403).json({ error: 'Приём заданий временно приостановлен' });
     }
@@ -171,7 +173,7 @@ app.post('/api/tasks', async (req, res) => {
     }
 
     const { data: inserted, error } = await supabase.from('tasks').insert([
-        { text: text.trim(), ip: ip, likes_count: 0, reports_count: 0 }
+        { text: text.trim(), ip: ip, likes_count: 0, reports_count: 0, type: taskType }
     ]).select().single();
 
     if (error) {
@@ -185,7 +187,8 @@ app.post('/api/tasks', async (req, res) => {
         text: inserted.text,
         created_at: inserted.created_at,
         likes_count: inserted.likes_count,
-        reports_count: inserted.reports_count
+        reports_count: inserted.reports_count,
+        type: inserted.type || taskType
     });
 
     res.json({ success: true, task: inserted });
@@ -216,9 +219,16 @@ app.get('/api/feed-stream', (req, res) => {
 // 1.2 Публичная лента заданий с сортировкой и статусами пользователя
 app.get('/api/feed-tasks', async (req, res) => {
     const sort = req.query.sort || 'new'; // 'new' или 'top'
+    const itemType = req.query.type || 'task'; // 'task' или 'punishment'
     const ip = getClientIp(req);
 
-    let query = supabase.from('tasks').select('id, text, created_at, likes_count, reports_count');
+    let query = supabase.from('tasks').select('id, text, created_at, likes_count, reports_count, type');
+
+    if (itemType === 'punishment') {
+        query = query.eq('type', 'punishment');
+    } else {
+        query = query.or('type.eq.task,type.is.null');
+    }
 
     if (sort === 'top') {
         query = query.order('likes_count', { ascending: false }).order('created_at', { ascending: false });
@@ -309,11 +319,16 @@ app.post('/api/tasks/:id/report', async (req, res) => {
 
 // 1.1 Публичный список текстов для фона (без IP-адресов)
 app.get('/api/public-tasks', async (req, res) => {
-    const { data, error } = await supabase
-        .from('tasks')
-        .select('text')
-        .order('created_at', { ascending: false })
-        .limit(50);
+    const itemType = req.query.type || buttonMode || 'task';
+    let query = supabase.from('tasks').select('text').order('created_at', { ascending: false }).limit(50);
+    
+    if (itemType === 'punishment') {
+        query = query.eq('type', 'punishment');
+    } else {
+        query = query.or('type.eq.task,type.is.null');
+    }
+
+    const { data, error } = await query;
 
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
@@ -339,31 +354,47 @@ function authMiddleware(req, res, next) {
     next();
 }
 
-// Добавление задания вручную администратором
+// Добавление задания/наказания вручную администратором
 app.post('/api/admin/tasks', authMiddleware, async (req, res) => {
-    const { text } = req.body;
+    const { text, type } = req.body;
+    const itemType = type === 'punishment' ? 'punishment' : 'task';
     if (!text || text.trim().length === 0) {
-        return res.status(400).json({ error: 'Текст задания не может быть пустым' });
+        return res.status(400).json({ error: 'Текст не может быть пустым' });
     }
 
     const { data: inserted, error } = await supabase.from('tasks').insert([
-        { text: text.trim(), ip: 'Администратор', likes_count: 0, reports_count: 0 }
+        { text: text.trim(), ip: 'Администратор', likes_count: 0, reports_count: 0, type: itemType }
     ]).select().single();
 
     if (error) {
         return res.status(500).json({ error: error.message });
     }
 
-    // Рассылаем всем открытым вкладкам новое задание
+    // Рассылаем всем открытым вкладкам новое задание/наказание
     broadcastFeedEvent('new_task', {
         id: inserted.id,
         text: inserted.text,
         created_at: inserted.created_at,
         likes_count: inserted.likes_count,
-        reports_count: inserted.reports_count
+        reports_count: inserted.reports_count,
+        type: inserted.type
     });
 
     res.json({ success: true, task: inserted });
+});
+
+// Переключение и получение режима кнопки (Задания / Наказания)
+app.get('/api/admin/mode', authMiddleware, (req, res) => {
+    res.json({ mode: buttonMode });
+});
+
+app.post('/api/admin/mode', authMiddleware, (req, res) => {
+    const { mode } = req.body;
+    if (mode === 'task' || mode === 'punishment') {
+        buttonMode = mode;
+        broadcastFeedEvent('mode_toggle', { mode: buttonMode });
+    }
+    res.json({ success: true, mode: buttonMode });
 });
 
 // Переключение и получение статуса кнопки приёма заданий (админ)

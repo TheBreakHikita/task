@@ -280,6 +280,15 @@
                     <span id="submissionsStatusText" style="font-size: 0.8em; color: var(--text-muted);">...</span>
                 </div>
 
+                <!-- Переключатель режима кнопки: Задания / Наказания -->
+                <div class="keepalive-panel">
+                    <span style="font-size: 0.85em; font-weight: 600;">Режим кнопки:</span>
+                    <select id="modeSelect" class="form-control" style="width: auto; padding: 4px 8px; font-size: 0.85em;" onchange="changeButtonMode(this.value)">
+                        <option value="task">🐸 Задания</option>
+                        <option value="punishment">💀 Наказания</option>
+                    </select>
+                </div>
+
                 <!-- Кнопка создания задания вручную -->
                 <button class="btn btn-success" onclick="openAddTaskModal()">➕ Создать задание</button>
                 <div class="keepalive-panel">
@@ -299,13 +308,19 @@
 
         <!-- Вкладки меню -->
         <div class="admin-nav">
-            <button class="nav-tab active" id="tabTasksBtn" onclick="switchTab('tasks')">📋 Все задания</button>
+            <button class="nav-tab active" id="tabTasksBtn" onclick="switchTab('tasks')">📋 Задания</button>
+            <button class="nav-tab" id="tabPunishmentsBtn" onclick="switchTab('punishments')">💀 Наказания</button>
             <button class="nav-tab" id="tabReportsBtn" onclick="switchTab('reports')">🚨 Жалобы и Чёрный список</button>
         </div>
 
-        <!-- Контент вкладки 1: Все задания -->
+        <!-- Контент вкладки 1: Задания -->
         <div id="tasksTabContent">
             <div id="tasksList"></div>
+        </div>
+
+        <!-- Контент вкладки 2: Наказания -->
+        <div id="punishmentsTabContent" style="display: none;">
+            <div id="punishmentsList"></div>
         </div>
 
         <!-- Контент вкладки 2: Жалобы и ЧС -->
@@ -321,10 +336,17 @@
     <!-- Модальное окно ручного добавления задания -->
     <div id="addTaskModal" style="position: fixed; inset: 0; background: rgba(15, 23, 42, 0.8); display: none; align-items: center; justify-content: center; z-index: 1000;" onclick="if(event.target === this) closeAddTaskModal()">
         <div class="schedule-box">
-            <h3 style="margin-bottom: 8px;">➕ Добавить задание вручную</h3>
+            <h3 style="margin-bottom: 8px;">➕ Добавить запись вручную</h3>
             <p style="color: var(--text-muted); font-size: 0.85em; margin-bottom: 15px;">Дата и время сформируются текущим моментом добавления.</p>
             <div class="form-group">
-                <textarea id="adminTaskText" class="form-control" style="height: 120px; resize: vertical;" placeholder="Введите текст задания..."></textarea>
+                <label>Тип записи</label>
+                <select id="adminTaskType" class="form-control" style="margin-bottom: 12px;">
+                    <option value="task">🐸 Задание</option>
+                    <option value="punishment">💀 Наказание</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <textarea id="adminTaskText" class="form-control" style="height: 120px; resize: vertical;" placeholder="Введите текст..."></textarea>
             </div>
             <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
                 <button class="btn btn-danger" onclick="closeAddTaskModal()" style="padding: 8px 16px;">Отмена</button>
@@ -414,6 +436,36 @@
             loadTasks();
             loadKeepAliveStatus();
             loadSubmissionsStatus();
+            loadButtonMode();
+        }
+
+        async function loadButtonMode() {
+            try {
+                const res = await fetch('/api/admin/mode', {
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('modeSelect').value = data.mode || 'task';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function changeButtonMode(mode) {
+            try {
+                const res = await fetch('/api/admin/mode', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ mode })
+                });
+                if (!res.ok) alert('Ошибка переключения режима');
+            } catch (e) {
+                alert('Ошибка соединения с сервером');
+            }
         }
 
         // Загрузка и переключение статуса кнопки "Дать задание"
@@ -466,8 +518,9 @@
 
         async function createAdminTask() {
             const text = document.getElementById('adminTaskText').value.trim();
+            const type = document.getElementById('adminTaskType').value;
             if (!text) {
-                return alert('Введите текст задания!');
+                return alert('Введите текст!');
             }
 
             try {
@@ -477,15 +530,15 @@
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${authToken}`
                     },
-                    body: JSON.stringify({ text })
+                    body: JSON.stringify({ text, type })
                 });
 
                 const data = await res.json();
                 if (res.ok && data.success) {
                     closeAddTaskModal();
-                    if (currentTab === 'tasks') loadTasks();
+                    loadTasks();
                 } else {
-                    alert('Ошибка: ' + (data.error || 'Не удалось создать задание'));
+                    alert('Ошибка: ' + (data.error || 'Не удалось создать запись'));
                 }
             } catch (e) {
                 alert('Ошибка связи с сервером');
@@ -597,17 +650,20 @@
         function switchTab(tab) {
             currentTab = tab;
             document.getElementById('tabTasksBtn').classList.toggle('active', tab === 'tasks');
+            document.getElementById('tabPunishmentsBtn').classList.toggle('active', tab === 'punishments');
             document.getElementById('tabReportsBtn').classList.toggle('active', tab === 'reports');
+
             document.getElementById('tasksTabContent').style.display = tab === 'tasks' ? 'block' : 'none';
+            document.getElementById('punishmentsTabContent').style.display = tab === 'punishments' ? 'block' : 'none';
             document.getElementById('reportsTabContent').style.display = tab === 'reports' ? 'block' : 'none';
 
-            if (tab === 'tasks') loadTasks();
+            if (tab === 'tasks' || tab === 'punishments') loadTasks();
             else loadReportsAndBlacklist();
         }
 
         function refreshCurrentTab() {
             loadKeepAliveStatus();
-            if (currentTab === 'tasks') loadTasks();
+            if (currentTab === 'tasks' || currentTab === 'punishments') loadTasks();
             else loadReportsAndBlacklist();
         }
 
@@ -632,14 +688,22 @@
 
         function renderTasks(tasks) {
             document.getElementById('tasksCount').innerText = tasks.length;
-            const container = document.getElementById('tasksList');
+            
+            const taskItems = tasks.filter(t => !t.type || t.type === 'task');
+            const punishmentItems = tasks.filter(t => t.type === 'punishment');
 
-            if (!tasks.length) {
-                container.innerHTML = '<div class="empty-state">Пока никто ничего не отправил 😴</div>';
+            renderTaskListInto(document.getElementById('tasksList'), taskItems, 'Заданий пока нет 😴');
+            renderTaskListInto(document.getElementById('punishmentsList'), punishmentItems, 'Наказаний пока нет 💀');
+        }
+
+        function renderTaskListInto(container, items, emptyText) {
+            if (!container) return;
+            if (!items.length) {
+                container.innerHTML = `<div class="empty-state">${emptyText}</div>`;
                 return;
             }
 
-            container.innerHTML = tasks.map(task => {
+            container.innerHTML = items.map(task => {
                 const date = new Date(task.created_at).toLocaleString('ru-RU');
                 return `
                 <div class="task-card" id="task-${task.id}">

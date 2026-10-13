@@ -65,6 +65,43 @@
             opacity: 0.65 !important;
         }
 
+        /* Стиль для кнопки режима Наказания */
+        .big-btn.punishment-mode {
+            background: linear-gradient(135deg, #7c3aed 0%, #dc2626 100%);
+            box-shadow: 0 15px 35px rgba(220, 38, 38, 0.45);
+        }
+        .big-btn.punishment-mode:hover {
+            box-shadow: 0 20px 45px rgba(220, 38, 38, 0.65);
+        }
+
+        /* Сегментные кнопки выбора списка (Задания / Наказания) */
+        .feed-type-tabs {
+            display: flex;
+            background: #0f172a;
+            padding: 4px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            gap: 4px;
+            margin-bottom: 12px;
+        }
+        .feed-type-btn {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-weight: 700;
+            font-size: 0.95em;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .feed-type-btn.active {
+            background: #1e293b;
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
         /* Модальное окно */
         .modal-overlay {
             position: fixed;
@@ -593,8 +630,8 @@
     <!-- Большая кнопка по центру -->
     <div id="floatingContainer"></div>
     <button class="big-btn" id="giveTaskBtn" onclick="openModal()">
-        <span style="font-size: 2.2rem; line-height: 1;">🐸</span>
-        <span>Дать задание</span>
+        <span id="bigBtnEmoji" style="font-size: 2.2rem; line-height: 1;">🐸</span>
+        <span id="bigBtnText">Дать задание</span>
     </button>
 
     <!-- Полупрозрачная кнопка списка заданий снизу -->
@@ -607,10 +644,16 @@
         <div class="modal feed-modal">
             <div class="feed-header">
                 <div>
-                    <h2 class="modal-title" style="margin-bottom: 2px;">Список заданий 🔥</h2>
-                    <p class="modal-subtitle" style="margin-bottom: 0;">Голосуй за лучшие идеи или предлагай свои</p>
+                    <h2 class="modal-title" id="feedModalTitle" style="margin-bottom: 2px;">Список идей 🔥</h2>
+                    <p class="modal-subtitle" style="margin-bottom: 0;">Голосуй за лучшее или предлагай своё</p>
                 </div>
                 <button class="close-feed-btn" onclick="closeFeedModal()">✕</button>
+            </div>
+
+            <!-- Переключатель между списками: Задания / Наказания -->
+            <div class="feed-type-tabs">
+                <button class="feed-type-btn active" id="feedTypeTaskBtn" onclick="switchFeedType('task')">🐸 Задания</button>
+                <button class="feed-type-btn" id="feedTypePunishmentBtn" onclick="switchFeedType('punishment')">💀 Наказания</button>
             </div>
 
             <div class="sort-dropdown-wrap" id="sortDropdownWrap">
@@ -631,8 +674,8 @@
     <!-- Всплывающее окно -->
     <div class="modal-overlay" id="modalOverlay" onclick="handleOverlayClick(event)">
         <div class="modal">
-            <h2 class="modal-title">Твоя безумная идея 💡</h2>
-            <p class="modal-subtitle">Напиши задание или вызов, который thebreakhikita должен выполнить.</p>
+            <h2 class="modal-title" id="inputModalTitle">Твоя безумная идея 💡</h2>
+            <p class="modal-subtitle" id="inputModalSubtitle">Напиши задание или вызов, который thebreakhikita должен выполнить.</p>
             
             <textarea id="taskInput" placeholder="Например: Сделай сальто" maxlength="2000"></textarea>
             
@@ -776,6 +819,8 @@
         const feedModalOverlay = document.getElementById('feedModalOverlay');
         const feedList = document.getElementById('feedList');
         let currentFeedSort = 'top';
+        let currentFeedType = 'task'; // 'task' или 'punishment'
+        let currentMode = 'task';     // Текущий режим сервера
         let currentFeedData = []; // Локальный кэш списка
         let hasInitialLoaded = false;
         let eventSource = null;
@@ -910,13 +955,21 @@
             feedList.innerHTML = currentFeedData.map(createFeedCardHtml).join('');
         }
 
+        function switchFeedType(type) {
+            if (currentFeedType === type) return;
+            currentFeedType = type;
+            document.getElementById('feedTypeTaskBtn').classList.toggle('active', type === 'task');
+            document.getElementById('feedTypePunishmentBtn').classList.toggle('active', type === 'punishment');
+            loadFeed(true);
+        }
+
         async function loadFeed(isInitial = false) {
-            if (isInitial && !hasInitialLoaded) {
+            if (isInitial) {
                 showSkeletons();
             }
 
             try {
-                const res = await fetch(`/api/feed-tasks?sort=${currentFeedSort}`);
+                const res = await fetch(`/api/feed-tasks?sort=${currentFeedSort}&type=${currentFeedType}`);
                 const data = await res.json();
 
                 if (!res.ok) throw new Error(data.error || 'Ошибка загрузки');
@@ -953,9 +1006,11 @@
                     if (type === 'new_task') {
                         handleRealtimeNewTask(payload);
                     } else if (type === 'vote_update') {
+                        handleRealtimeVoteUpdate(payload);
                     } else if (type === 'submissions_toggle') {
                         updateSubmissionsUI(payload.enabled);
-                        handleRealtimeVoteUpdate(payload);
+                    } else if (type === 'mode_toggle') {
+                        updateButtonModeUI(payload.mode);
                     } else if (type === 'report_update') {
                         handleRealtimeReportUpdate(payload);
                     } else if (type === 'task_deleted') {
@@ -971,8 +1026,10 @@
             };
         }
 
-        // Обработка нового задания
+        // Обработка нового задания/наказания
         function handleRealtimeNewTask(task) {
+            const taskType = task.type || 'task';
+            if (taskType !== currentFeedType) return;
             if (currentFeedData.some(t => t.id === task.id)) return;
 
             currentFeedData.push(task);
@@ -1144,6 +1201,34 @@
 
         let isSubmissionsEnabled = true;
 
+        function updateButtonModeUI(mode) {
+            currentMode = mode || 'task';
+            const btn = document.getElementById('giveTaskBtn');
+            const emojiEl = document.getElementById('bigBtnEmoji');
+            const textEl = document.getElementById('bigBtnText');
+            const inputTitle = document.getElementById('inputModalTitle');
+            const inputSub = document.getElementById('inputModalSubtitle');
+            const inputField = document.getElementById('taskInput');
+
+            if (currentMode === 'punishment') {
+                btn.classList.add('punishment-mode');
+                emojiEl.innerText = '💀';
+                textEl.innerText = 'Дать наказание';
+
+                inputTitle.innerText = 'Жестокое наказание 💀';
+                inputSub.innerText = 'Напиши наказание, которое thebreakhikita должен понести.';
+                inputField.placeholder = 'Например: Съешь целый лимон без сахара';
+            } else {
+                btn.classList.remove('punishment-mode');
+                emojiEl.innerText = '🐸';
+                textEl.innerText = 'Дать задание';
+
+                inputTitle.innerText = 'Твоя безумная идея 💡';
+                inputSub.innerText = 'Напиши задание или вызов, который thebreakhikita должен выполнить.';
+                inputField.placeholder = 'Например: Сделай сальто';
+            }
+        }
+
         function updateSubmissionsUI(enabled) {
             isSubmissionsEnabled = enabled;
             const btn = document.getElementById('giveTaskBtn');
@@ -1154,7 +1239,7 @@
                 btn.title = '';
             } else {
                 btn.classList.add('disabled');
-                btn.title = 'Приём заданий временно приостановлен';
+                btn.title = 'Приём временно приостановлен';
             }
         }
 
@@ -1164,6 +1249,9 @@
                 if (res.ok) {
                     const data = await res.json();
                     updateSubmissionsUI(data.enabled);
+                    if (data.mode) {
+                        updateButtonModeUI(data.mode);
+                    }
                 }
             } catch (e) {}
         }
@@ -1223,7 +1311,7 @@
                 const res = await fetch('/api/tasks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text })
+                    body: JSON.stringify({ text, type: currentMode })
                 });
 
                 const data = await res.json();
@@ -1231,7 +1319,9 @@
                 if (res.ok && data.success) {
                     statusMsg.style.display = 'block';
                     statusMsg.style.color = '#4ade80';
-                    statusMsg.innerText = '✅ Задание отправлено блогеру!';
+                    statusMsg.innerText = currentMode === 'punishment' 
+                        ? '✅ Наказание отправлено блогеру!' 
+                        : '✅ Задание отправлено блогеру!';S
                     localStorage.setItem('last_task_sent_time', Date.now().toString());
                     
                     // Сразу добавляем новое задание в общий пул и в начало очереди

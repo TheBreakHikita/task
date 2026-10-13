@@ -741,21 +741,34 @@
             "67"
         ];
 
+        // Базовые примеры для режима наказания при пустой базе
+        const fallbackPunishments = [
+            "Напиши наказание",
+            "Накажи меня",
+            "Я отказался от задания? НАКАЖИ",
+            "Что я сделал не так?",
+            "Давай я жду!",
+            "хахахаха",
+            "Чего ты ждешь?"
+        ];
+
         async function fetchBackgroundTasks() {
+            const targetType = currentMode || 'task';
             try {
-                const res = await fetch('/api/public-tasks');
+                const res = await fetch(`/api/public-tasks?type=${targetType}`);
                 if (res.ok) {
                     const data = await res.json();
                     if (data && data.length > 0) {
                         backgroundTasks = data.map(item => item.text);
+                        taskQueue = shuffleArray(backgroundTasks);
+                        return;
                     }
                 }
             } catch (e) {
                 console.log('Используются дефолтные подсказки на фоне');
             }
-            if (backgroundTasks.length === 0) {
-                backgroundTasks = [...fallbackTasks];
-            }
+            backgroundTasks = targetType === 'punishment' ? [...fallbackPunishments] : [...fallbackTasks];
+            taskQueue = shuffleArray(backgroundTasks);
         }
 
         function spawnFloatingTask(customText = null, isHighlight = false) {
@@ -827,17 +840,20 @@
             }, duration);
         }
 
-        // Запуск загрузки и интервала появления (каждые 1.8 секунды)
+        // Запуск загрузки и интервала появления (каждые 2 секунды)
         fetchBackgroundTasks().then(() => {
             spawnFloatingTask();
             setInterval(spawnFloatingTask, 2000);
+            // Периодически раз в минуту подтягиваем актуальные записи из БД для фона
+            setInterval(() => fetchBackgroundTasks(), 60000);
         });
         // ЛОГИКА СПИСКА ЗАДАНИЙ, ГОЛОСОВАНИЯ И ЖАЛОБ
         const feedModalOverlay = document.getElementById('feedModalOverlay');
         const feedList = document.getElementById('feedList');
         let currentFeedSort = 'top';
-        let currentFeedType = 'task'; // 'task' или 'punishment'
-        let currentMode = 'task';     // Текущий режим сервера
+        const initialSavedMode = localStorage.getItem('cached_button_mode') || 'task';
+        let currentMode = initialSavedMode;     // Текущий режим сервера
+        let currentFeedType = initialSavedMode; // 'task' или 'punishment'
         // Раздельный кэш: хранит списки заданий и наказаний независимо
         const feedCache = {
             task: null,
@@ -885,12 +901,9 @@
         function openFeedModal() {
             document.body.classList.add('modal-open');
             feedModalOverlay.classList.add('active');
-            // Загружаем с сервера только если для выбранной вкладки данных еще нет
-            if (!feedCache[currentFeedType]) {
-                loadFeed(true);
-            } else {
-                sortAndRenderFeed();
-            }
+            
+            // По умолчанию открываем список в зависимости от текущего активного режима
+            switchFeedType(currentMode);
         }
 
         function closeFeedModal() {
@@ -981,7 +994,6 @@
         }
 
         function switchFeedType(type) {
-            if (currentFeedType === type) return;
             currentFeedType = type;
             document.getElementById('feedTypeTaskBtn').classList.toggle('active', type === 'task');
             document.getElementById('feedTypePunishmentBtn').classList.toggle('active', type === 'punishment');
@@ -1057,6 +1069,15 @@
         // Обработка нового задания/наказания
         function handleRealtimeNewTask(task) {
             const taskType = task.type === 'punishment' ? 'punishment' : 'task';
+
+            // Если пришедшая запись соответствует текущему режиму — сразу добавляем в фон и отображаем
+            if (taskType === currentMode) {
+                if (!backgroundTasks.includes(task.text)) {
+                    backgroundTasks.unshift(task.text);
+                    taskQueue.unshift(task.text);
+                    spawnFloatingTask(task.text, true);
+                }
+            }
 
             // Если список этого типа уже был загружен в память — обновляем кэш
             if (feedCache[taskType]) {
@@ -1242,6 +1263,7 @@
         let isSubmissionsEnabled = true;
 
         function updateButtonModeUI(mode) {
+            const prevMode = currentMode;
             currentMode = mode || 'task';
             const btn = document.getElementById('giveTaskBtn');
             localStorage.setItem('cached_button_mode', currentMode);
@@ -1267,6 +1289,11 @@
                 inputTitle.innerText = 'Твоя безумная идея 💡';
                 inputSub.innerText = 'Напиши задание или вызов, который thebreakhikita должен выполнить.';
                 inputField.placeholder = 'Например: Сделай сальто';
+            }
+
+            // Если режим сменился — обновляем фоновые карточки под новый тип
+            if (prevMode !== currentMode) {
+                fetchBackgroundTasks();
             }
         }
 

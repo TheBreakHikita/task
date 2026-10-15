@@ -10,7 +10,7 @@ let sseClients = [];
 // Кэш для защиты от спама: хранит временную метку последней отправки задания по IP
 const taskRateLimitMap = new Map();
 let submissionsEnabled = true;
-let buttonMode = 'task'; // 'task' (Задания) или 'punishment' (Наказания)
+let buttonMode = 'task'; // 'task', 'punishment' или 'modifier'
 let keepAliveConfig = {
     enabled: true,              // Главный переключатель
     useSchedule: false,         // Использовать ли расписание
@@ -175,8 +175,11 @@ function getClientIp(req) {
 
 // 1. Отправка нового задания пользователем
 app.post('/api/tasks', async (req, res) => {
-    const { text, type } = req.body;
-    const taskType = (type === 'punishment' || buttonMode === 'punishment') ? 'punishment' : 'task';
+    const { text, type, parent_id } = req.body;
+    let taskType = 'task';
+    const effectiveType = type || buttonMode;
+    if (effectiveType === 'punishment') taskType = 'punishment';
+    else if (effectiveType === 'modifier') taskType = 'modifier';
     if (!submissionsEnabled) {
         return res.status(403).json({ error: 'Приём заданий временно приостановлен' });
     }
@@ -203,12 +206,20 @@ app.post('/api/tasks', async (req, res) => {
         });
     }
 
+    const parsedParentId = parent_id ? Number(parent_id) : null;
     const { data: inserted, error } = await supabase.from('tasks').insert([
-        { text: text.trim(), ip: ip, likes_count: 0, reports_count: 0, type: taskType }
+        { text: text.trim(), ip: ip, likes_count: 0, reports_count: 0, type: taskType, parent_id: parsedParentId }
     ]).select().single();
 
     if (error) {
         return res.status(500).json({ error: error.message });
+    }
+
+    // Подтягиваем данные родительского задания при наличии
+    let parentData = null;
+    if (parsedParentId) {
+        const { data: p } = await supabase.from('tasks').select('id, text, type').eq('id', parsedParentId).maybeSingle();
+        parentData = p || null;
     }
 
     // Оповещаем всех подключенных пользователей о новом задании
@@ -219,7 +230,9 @@ app.post('/api/tasks', async (req, res) => {
         created_at: inserted.created_at,
         likes_count: inserted.likes_count,
         reports_count: inserted.reports_count,
-        type: inserted.type || taskType
+        type: inserted.type || taskType,
+        parent_id: inserted.parent_id,
+        parent: parentData
     });
 
     res.json({ success: true, task: inserted });
@@ -250,13 +263,15 @@ app.get('/api/feed-stream', (req, res) => {
 // 1.2 Публичная лента заданий с сортировкой и статусами пользователя
 app.get('/api/feed-tasks', async (req, res) => {
     const sort = req.query.sort || 'new'; // 'new' или 'top'
-    const itemType = req.query.type || 'task'; // 'task' или 'punishment'
+    const itemType = req.query.type || 'task'; // 'task', 'punishment' или 'modifier'
     const ip = getClientIp(req);
 
-    let query = supabase.from('tasks').select('id, text, created_at, likes_count, reports_count, type');
+    let query = supabase.from('tasks').select('id, text, created_at, likes_count, reports_count, type, parent_id');
 
     if (itemType === 'punishment') {
         query = query.eq('type', 'punishment');
+    } else if (itemType === 'modifier') {
+        query = query.eq('type', 'modifier');
     } else {
         query = query.or('type.eq.task,type.is.null');
     }
@@ -270,6 +285,14 @@ app.get('/api/feed-tasks', async (req, res) => {
     const { data: tasks, error } = await query.limit(100);
     if (error) return res.status(500).json({ error: error.message });
 
+    // Если запрошены усложнения, собираем информацию об их родителях
+    let parentMap = new Map();
+    const parentIds = [...new Set((tasks || []).map(t => t.parent_id).filter(Boolean))];
+    if (parentIds.length > 0) {
+        const { data: parents } = await supabase.from('tasks').select('id, text, type').in('id', parentIds);
+        (parents || []).forEach(p => parentMap.set(p.id, p));
+    }
+
     // Получаем список ID, за которые данный IP уже голосовал или жаловался
     const { data: userVotes } = await supabase.from('task_votes').select('task_id').eq('ip', ip);
     const { data: userReports } = await supabase.from('task_reports').select('task_id').eq('ip', ip);
@@ -279,6 +302,7 @@ app.get('/api/feed-tasks', async (req, res) => {
 
     const enrichedTasks = tasks.map(t => ({
         ...t,
+        parent: t.parent_id ? (parentMap.get(t.parent_id) || null) : null,
         hasVoted: votedIds.has(t.id),
         hasReported: reportedIds.has(t.id)
     }));
@@ -355,6 +379,8 @@ app.get('/api/public-tasks', async (req, res) => {
     
     if (itemType === 'punishment') {
         query = query.eq('type', 'punishment');
+    } else if (itemType === 'modifier') {
+        query = query.eq('type', 'modifier');
     } else {
         query = query.or('type.eq.task,type.is.null');
     }
@@ -363,6 +389,19 @@ app.get('/api/public-tasks', async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
+});
+
+// 1.1.1 Быстрый список заданий и наказаний для выбора родителя при создании усложнения
+app.get('/api/available-parents', async (req, res) => {
+    const { data, error } = await supabase
+        .from('tasks')
+        .select('id, text, type, likes_count')
+        .or('type.eq.task,type.eq.punishment,type.is.null')
+        .order('likes_count', { ascending: false })
+        .limit(100);
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(data || []);
 });
 
 // 2. Вход для админа
@@ -387,14 +426,17 @@ function authMiddleware(req, res, next) {
 
 // Добавление задания/наказания вручную администратором
 app.post('/api/admin/tasks', authMiddleware, async (req, res) => {
-    const { text, type } = req.body;
-    const itemType = type === 'punishment' ? 'punishment' : 'task';
+    const { text, type, parent_id } = req.body;
+    let itemType = 'task';
+    if (type === 'punishment') itemType = 'punishment';
+    else if (type === 'modifier') itemType = 'modifier';
     if (!text || text.trim().length === 0) {
         return res.status(400).json({ error: 'Текст не может быть пустым' });
     }
 
+    const parsedParent = parent_id ? Number(parent_id) : null;
     const { data: inserted, error } = await supabase.from('tasks').insert([
-        { text: text.trim(), ip: 'Администратор', likes_count: 0, reports_count: 0, type: itemType }
+        { text: text.trim(), ip: 'Администратор', likes_count: 0, reports_count: 0, type: itemType, parent_id: parsedParent }
     ]).select().single();
 
     if (error) {
@@ -421,7 +463,7 @@ app.get('/api/admin/mode', authMiddleware, (req, res) => {
 
 app.post('/api/admin/mode', authMiddleware, async (req, res) => {
     const { mode } = req.body;
-    if (mode === 'task' || mode === 'punishment') {
+    if (mode === 'task' || mode === 'punishment' || mode === 'modifier') {
         buttonMode = mode;
         await saveSettings();
         broadcastFeedEvent('mode_toggle', { mode: buttonMode });

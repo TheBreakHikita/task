@@ -286,6 +286,7 @@
                     <select id="modeSelect" class="form-control" style="width: auto; padding: 4px 8px; font-size: 0.85em;" onchange="changeButtonMode(this.value)">
                         <option value="task">🐸 Задания</option>
                         <option value="punishment">💀 Наказания</option>
+                        <option value="modifier">⚡ Усложнения</option>
                     </select>
                 </div>
 
@@ -310,6 +311,7 @@
         <div class="admin-nav">
             <button class="nav-tab active" id="tabTasksBtn" onclick="switchTab('tasks')">📋 Задания</button>
             <button class="nav-tab" id="tabPunishmentsBtn" onclick="switchTab('punishments')">💀 Наказания</button>
+            <button class="nav-tab" id="tabModifiersBtn" onclick="switchTab('modifiers')">⚡ Усложнения</button>
             <button class="nav-tab" id="tabReportsBtn" onclick="switchTab('reports')">🚨 Жалобы и Чёрный список</button>
         </div>
 
@@ -321,6 +323,11 @@
         <!-- Контент вкладки 2: Наказания -->
         <div id="punishmentsTabContent" style="display: none;">
             <div id="punishmentsList"></div>
+        </div>
+
+        <!-- Контент вкладки 3: Усложнения -->
+        <div id="modifiersTabContent" style="display: none;">
+            <div id="modifiersList"></div>
         </div>
 
         <!-- Контент вкладки 2: Жалобы и ЧС -->
@@ -343,6 +350,7 @@
                 <select id="adminTaskType" class="form-control" style="margin-bottom: 12px;">
                     <option value="task">🐸 Задание</option>
                     <option value="punishment">💀 Наказание</option>
+                    <option value="modifier">⚡ Усложнение</option>
                 </select>
             </div>
             <div class="form-group">
@@ -651,19 +659,21 @@
             currentTab = tab;
             document.getElementById('tabTasksBtn').classList.toggle('active', tab === 'tasks');
             document.getElementById('tabPunishmentsBtn').classList.toggle('active', tab === 'punishments');
+            document.getElementById('tabModifiersBtn').classList.toggle('active', tab === 'modifiers');
             document.getElementById('tabReportsBtn').classList.toggle('active', tab === 'reports');
 
             document.getElementById('tasksTabContent').style.display = tab === 'tasks' ? 'block' : 'none';
             document.getElementById('punishmentsTabContent').style.display = tab === 'punishments' ? 'block' : 'none';
+            document.getElementById('modifiersTabContent').style.display = tab === 'modifiers' ? 'block' : 'none';
             document.getElementById('reportsTabContent').style.display = tab === 'reports' ? 'block' : 'none';
 
-            if (tab === 'tasks' || tab === 'punishments') loadTasks();
+            if (tab === 'tasks' || tab === 'punishments' || tab === 'modifiers') loadTasks();
             else loadReportsAndBlacklist();
         }
 
         function refreshCurrentTab() {
             loadKeepAliveStatus();
-            if (currentTab === 'tasks' || currentTab === 'punishments') loadTasks();
+            if (currentTab === 'tasks' || currentTab === 'punishments' || currentTab === 'modifiers') loadTasks();
             else loadReportsAndBlacklist();
         }
 
@@ -691,9 +701,11 @@
             
             const taskItems = tasks.filter(t => !t.type || t.type === 'task');
             const punishmentItems = tasks.filter(t => t.type === 'punishment');
+            const modifierItems = tasks.filter(t => t.type === 'modifier');
 
             renderTaskListInto(document.getElementById('tasksList'), taskItems, 'Заданий пока нет 😴');
             renderTaskListInto(document.getElementById('punishmentsList'), punishmentItems, 'Наказаний пока нет 💀');
+            renderTaskListInto(document.getElementById('modifiersList'), modifierItems, 'Усложнений пока нет ⚡');
         }
 
         function renderTaskListInto(container, items, emptyText) {

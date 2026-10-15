@@ -74,6 +74,64 @@
             box-shadow: 0 20px 45px rgba(220, 38, 38, 0.65);
         }
 
+        /* Стиль для кнопки режима Усложнения */
+        .big-btn.modifier-mode {
+            background: linear-gradient(135deg, #eab308 0%, #f97316 100%);
+            box-shadow: 0 15px 35px rgba(234, 179, 8, 0.45);
+        }
+        .big-btn.modifier-mode:hover {
+            box-shadow: 0 20px 45px rgba(234, 179, 8, 0.65);
+        }
+
+        /* Кнопка перехода к родительскому заданию/наказанию */
+        .parent-badge-btn {
+            background: rgba(234, 179, 8, 0.12);
+            border: 1px solid rgba(234, 179, 8, 0.35);
+            color: #fde047;
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 100%;
+            text-align: left;
+            transition: all 0.2s ease;
+            margin-bottom: 8px;
+        }
+        .parent-badge-btn:hover {
+            background: rgba(234, 179, 8, 0.25);
+            border-color: #fde047;
+            transform: translateX(2px);
+        }
+        .parent-badge-text {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 320px;
+        }
+
+        /* Поле выбора родительского задания в модалке */
+        .parent-select-box {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+        .parent-select-box select {
+            width: 100%;
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1px solid #475569;
+            padding: 9px 12px;
+            border-radius: 8px;
+            font-size: 0.95em;
+            outline: none;
+            margin-top: 6px;
+        }
+
         /* Сегментные кнопки выбора списка (Задания / Наказания) */
         .feed-type-tabs {
             display: flex;
@@ -637,15 +695,20 @@
         // Предотвращаем мигание кнопки при загрузке: мгновенно применяем сохраненный режим
         (function() {
             try {
-                if (localStorage.getItem('cached_button_mode') === 'punishment') {
-                    const btn = document.getElementById('giveTaskBtn');
-                    const emoji = document.getElementById('bigBtnEmoji');
-                    const text = document.getElementById('bigBtnText');
-                    if (btn && emoji && text) {
-                        btn.classList.add('punishment-mode');
-                        emoji.innerText = '💀';
-                        text.innerText = 'Дать наказание';
-                    }
+                const saved = localStorage.getItem('cached_button_mode');
+                const btn = document.getElementById('giveTaskBtn');
+                const emoji = document.getElementById('bigBtnEmoji');
+                const text = document.getElementById('bigBtnText');
+                if (!btn || !emoji || !text) return;
+
+                if (saved === 'punishment') {
+                    btn.classList.add('punishment-mode');
+                    emoji.innerText = '💀';
+                    text.innerText = 'Дать наказание';
+                } else if (saved === 'modifier') {
+                    btn.classList.add('modifier-mode');
+                    emoji.innerText = '⚡';
+                    text.innerText = 'Усложнить';
                 }
             } catch(e) {}
         })();
@@ -667,10 +730,11 @@
                 <button class="close-feed-btn" onclick="closeFeedModal()">✕</button>
             </div>
 
-            <!-- Переключатель между списками: Задания / Наказания -->
+            <!-- Переключатель между списками: Задания / Наказания / Усложнения -->
             <div class="feed-type-tabs">
                 <button class="feed-type-btn active" id="feedTypeTaskBtn" onclick="switchFeedType('task')">🐸 Задания</button>
                 <button class="feed-type-btn" id="feedTypePunishmentBtn" onclick="switchFeedType('punishment')">💀 Наказания</button>
+                <button class="feed-type-btn" id="feedTypeModifierBtn" onclick="switchFeedType('modifier')">⚡ Усложнения</button>
             </div>
 
             <div class="sort-dropdown-wrap" id="sortDropdownWrap">
@@ -694,6 +758,16 @@
             <h2 class="modal-title" id="inputModalTitle">Твоя безумная идея 💡</h2>
             <p class="modal-subtitle" id="inputModalSubtitle">Напиши задание или вызов, который thebreakhikita должен выполнить.</p>
             
+            <!-- Выбор задания/наказания для привязки усложнения -->
+            <div id="parentSelectionBlock" class="parent-select-box" style="display: none;">
+                <label style="font-size: 0.85em; font-weight: 600; color: #fde047; display: flex; align-items: center; gap: 5px;">
+                    🎯 К какому заданию или наказанию дать усложнение?
+                </label>
+                <select id="parentTaskSelect">
+                    <option value="">-- Выберите задание или наказание --</option>
+                </select>
+            </div>
+
             <textarea id="taskInput" placeholder="Например: Сделай сальто" maxlength="2000"></textarea>
             
             <div id="statusMsg" class="status-msg"></div>
@@ -758,6 +832,15 @@
             "Чего ты ждешь?"
         ];
 
+        const fallbackModifiers = [
+            "Усложни задание!",
+            "Чет легкие задания",
+            "Давай!",
+            "Чего ты ждешь?",
+            "Я не смотрю пиши усложнение",
+            "Кто ты воин?"
+        ];
+
         async function fetchBackgroundTasks() {
             const targetType = currentMode || 'task';
             try {
@@ -773,7 +856,13 @@
             } catch (e) {
                 console.log('Используются дефолтные подсказки на фоне');
             }
-            backgroundTasks = targetType === 'punishment' ? [...fallbackPunishments] : [...fallbackTasks];
+            if (targetType === 'punishment') {
+                backgroundTasks = [...fallbackPunishments];
+            } else if (targetType === 'modifier') {
+                backgroundTasks = [...fallbackModifiers];
+            } else {
+                backgroundTasks = [...fallbackTasks];
+            }
             taskQueue = shuffleArray(backgroundTasks);
         }
 
@@ -856,10 +945,11 @@
         const feedModalOverlay = document.getElementById('feedModalOverlay');
         const feedList = document.getElementById('feedList');
         let currentFeedSort = 'top';
-        // Раздельный кэш: хранит списки заданий и наказаний независимо
+        // Раздельный кэш: хранит списки заданий, наказаний и усложнений независимо
         const feedCache = {
             task: null,
-            punishment: null
+            punishment: null,
+            modifier: null
         };
         let eventSource = null;
 
@@ -958,8 +1048,23 @@
                 day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
             });
 
+            let parentBadgeHtml = '';
+            if (task.parent_id) {
+                const parentType = (task.parent && task.parent.type === 'punishment') ? 'punishment' : 'task';
+                const parentIcon = parentType === 'punishment' ? '💀' : '🐸';
+                const parentText = task.parent && task.parent.text ? task.parent.text : `Запись #${task.parent_id}`;
+                parentBadgeHtml = `
+                    <button type="button" class="parent-badge-btn" onclick="navigateToParent(${task.parent_id}, '${parentType}')" title="Нажмите, чтобы перейти">
+                        <span>${parentIcon} К:</span>
+                        <span class="parent-badge-text">«${escapeHtml(parentText)}»</span>
+                        <span>➔</span>
+                    </button>
+                `;
+            }
+
             return `
             <div class="feed-item" id="feed-item-${task.id}" data-id="${task.id}" data-likes="${task.likes_count || 0}" data-time="${new Date(task.created_at).getTime()}">
+                ${parentBadgeHtml}
                 <div class="feed-item-text">${escapeHtml(task.text)}</div>
                 <div class="feed-item-footer">
                     <span class="feed-time">${date}</span>
@@ -987,7 +1092,9 @@
             }
 
             if (!list.length) {
-                const emptyText = currentFeedType === 'punishment' ? 'Наказаний пока нет 💀' : 'Заданий пока нет 😴';
+                let emptyText = 'Заданий пока нет 😴';
+                if (currentFeedType === 'punishment') emptyText = 'Наказаний пока нет 💀';
+                else if (currentFeedType === 'modifier') emptyText = 'Усложнений пока нет ⚡';
                 feedList.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 40px;">${emptyText}</div>`;
                 return;
             }
@@ -995,10 +1102,29 @@
             feedList.innerHTML = list.map(createFeedCardHtml).join('');
         }
 
+        async function navigateToParent(parentId, parentType) {
+            // Переключаем вкладку списка на тип родителя
+            await switchFeedType(parentType);
+
+            // Ждем завершения рендера и скроллим к карточке
+            setTimeout(() => {
+                const targetEl = document.getElementById(`feed-item-${parentId}`);
+                if (targetEl) {
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    targetEl.classList.remove('highlight-live');
+                    void targetEl.offsetWidth; // перезапуск css-анимации
+                    targetEl.classList.add('highlight-live');
+                } else {
+                    alert('Задание находится дальше в списке или было удалено');
+                }
+            }, 150);
+        }
+
         function switchFeedType(type) {
             currentFeedType = type;
             document.getElementById('feedTypeTaskBtn').classList.toggle('active', type === 'task');
             document.getElementById('feedTypePunishmentBtn').classList.toggle('active', type === 'punishment');
+            document.getElementById('feedTypeModifierBtn').classList.toggle('active', type === 'modifier');
 
             // Если список уже загружен в память — мгновенно показываем его БЕЗ запроса к серверу и БЕЗ скелетонов
             if (feedCache[currentFeedType]) {
@@ -1070,7 +1196,9 @@
 
         // Обработка нового задания/наказания
         function handleRealtimeNewTask(task) {
-            const taskType = task.type === 'punishment' ? 'punishment' : 'task';
+            let taskType = 'task';
+            if (task.type === 'punishment') taskType = 'punishment';
+            else if (task.type === 'modifier') taskType = 'modifier';
 
             // Если пришедшая запись соответствует текущему режиму — сразу добавляем в фон и отображаем
             if (taskType === currentMode) {
@@ -1110,7 +1238,7 @@
         // Обработка изменения голосов (лайков)
         function handleRealtimeVoteUpdate({ id, likes_count }) {
             let taskFound = null;
-            ['task', 'punishment'].forEach(type => {
+            ['task', 'punishment', 'modifier'].forEach(type => {
                 if (feedCache[type]) {
                     const item = feedCache[type].find(t => t.id === id);
                     if (item) {
@@ -1173,7 +1301,7 @@
 
         // Обработка изменения репортов
         function handleRealtimeReportUpdate({ id, reports_count }) {
-            ['task', 'punishment'].forEach(type => {
+            ['task', 'punishment', 'modifier'].forEach(type => {
                 if (feedCache[type]) {
                     const item = feedCache[type].find(t => t.id === id);
                     if (item) item.reports_count = reports_count;
@@ -1186,7 +1314,7 @@
 
         // Обработка удаления задания админом
         function handleRealtimeDelete({ id }) {
-            ['task', 'punishment'].forEach(type => {
+            ['task', 'punishment', 'modifier'].forEach(type => {
                 if (feedCache[type]) {
                     feedCache[type] = feedCache[type].filter(t => t.id !== id);
                 }
@@ -1274,6 +1402,9 @@
             const inputTitle = document.getElementById('inputModalTitle');
             const inputSub = document.getElementById('inputModalSubtitle');
             const inputField = document.getElementById('taskInput');
+            const parentBlock = document.getElementById('parentSelectionBlock');
+
+            btn.classList.remove('punishment-mode', 'modifier-mode');
 
             if (currentMode === 'punishment') {
                 btn.classList.add('punishment-mode');
@@ -1283,14 +1414,27 @@
                 inputTitle.innerText = 'Жестокое наказание 💀';
                 inputSub.innerText = 'Напиши наказание, которое thebreakhikita должен понести.';
                 inputField.placeholder = 'Например: Съешь целый лимон без сахара';
+                if (parentBlock) parentBlock.style.display = 'none';
+            } else if (currentMode === 'modifier') {
+                btn.classList.add('modifier-mode');
+                emojiEl.innerText = '⚡';
+                textEl.innerText = 'Усложнить';
+
+                inputTitle.innerText = 'Усложнение вызова ⚡';
+                inputSub.innerText = 'Выбери задание/наказание и добавь условие или ограничение!';
+                inputField.placeholder = 'Например: Не используя руки / стоя на одной ноге';
+                if (parentBlock) {
+                    parentBlock.style.display = 'block';
+                    loadAvailableParents();
+                }
             } else {
-                btn.classList.remove('punishment-mode');
                 emojiEl.innerText = '🐸';
                 textEl.innerText = 'Дать задание';
 
                 inputTitle.innerText = 'Твоя безумная идея 💡';
                 inputSub.innerText = 'Напиши задание или вызов, который thebreakhikita должен выполнить.';
                 inputField.placeholder = 'Например: Сделай сальто';
+                if (parentBlock) parentBlock.style.display = 'none';
             }
 
             // Если режим сменился — обновляем фоновые карточки под новый тип
@@ -1327,10 +1471,35 @@
         }
         fetchSubmissionsStatus();
 
+        async function loadAvailableParents() {
+            const select = document.getElementById('parentTaskSelect');
+            if (!select) return;
+            select.innerHTML = '<option value="">⏳ Загрузка заданий...</option>';
+            try {
+                const res = await fetch('/api/available-parents');
+                const list = await res.json();
+                if (!list.length) {
+                    select.innerHTML = '<option value="">(Пока нет заданий для выбора)</option>';
+                    return;
+                }
+                select.innerHTML = '<option value="">-- Выберите задание или наказание --</option>' +
+                    list.map(item => {
+                        const icon = item.type === 'punishment' ? '💀' : '🐸';
+                        const text = item.text.length > 60 ? item.text.slice(0, 60) + '...' : item.text;
+                        return `<option value="${item.id}">${icon} [❤️ ${item.likes_count || 0}] ${escapeHtml(text)}</option>`;
+                    }).join('');
+            } catch(e) {
+                select.innerHTML = '<option value="">(Ошибка загрузки списка)</option>';
+            }
+        }
+
         function openModal() {
             if (!isSubmissionsEnabled) return;
             document.body.classList.add('modal-open');
             modalOverlay.classList.add('active');
+            if (currentMode === 'modifier') {
+                loadAvailableParents();
+            }
             taskInput.focus();
         }
 
@@ -1377,11 +1546,23 @@
             submitBtn.disabled = true;
             submitBtn.innerText = 'Отправка...';
 
+            const parentSelect = document.getElementById('parentTaskSelect');
+            const parentId = (currentMode === 'modifier' && parentSelect) ? parentSelect.value : null;
+
+            if (currentMode === 'modifier' && !parentId) {
+                statusMsg.style.display = 'block';
+                statusMsg.style.color = '#ef4444';
+                statusMsg.innerText = '⚠️ Пожалуйста, выберите задание или наказание из списка выше!';
+                submitBtn.disabled = false;
+                submitBtn.innerText = 'Отправить 🚀';
+                return;
+            }
+
             try {
                 const res = await fetch('/api/tasks', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text, type: currentMode })
+                    body: JSON.stringify({ text, type: currentMode, parent_id: parentId })
                 });
 
                 const data = await res.json();
@@ -1389,9 +1570,10 @@
                 if (res.ok && data.success) {
                     statusMsg.style.display = 'block';
                     statusMsg.style.color = '#4ade80';
-                    statusMsg.innerText = currentMode === 'punishment' 
-                        ? '✅ Наказание отправлено блогеру!' 
-                        : '✅ Задание отправлено блогеру!';
+                    let successText = '✅ Задание отправлено блогеру!';
+                    if (currentMode === 'punishment') successText = '✅ Наказание отправлено блогеру!';
+                    else if (currentMode === 'modifier') successText = '⚡ Усложнение прикреплено и отправлено!';
+                    statusMsg.innerText = successText;
                     localStorage.setItem('last_task_sent_time', Date.now().toString());
                     
                     // Сразу добавляем новое задание в общий пул и в начало очереди

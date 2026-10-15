@@ -262,11 +262,16 @@ app.get('/api/feed-stream', (req, res) => {
 
 // 1.2 Публичная лента заданий с сортировкой и статусами пользователя
 app.get('/api/feed-tasks', async (req, res) => {
-    const sort = req.query.sort || 'new'; // 'new' или 'top'
+    const sort = req.query.sort || 'new'; // 'new', 'top' или 'favorite'
     const itemType = req.query.type || 'task'; // 'task', 'punishment' или 'modifier'
     const ip = getClientIp(req);
 
-    let query = supabase.from('tasks').select('id, text, created_at, likes_count, reports_count, type, parent_id');
+    let query = supabase.from('tasks').select('id, text, created_at, likes_count, reports_count, type, parent_id, is_favorite');
+
+    // Фильтр "Избранные" доступен только для заданий
+    if (itemType === 'task' && sort === 'favorite') {
+        query = query.eq('is_favorite', true);
+    }
 
     if (itemType === 'punishment') {
         query = query.eq('type', 'punishment');
@@ -391,12 +396,13 @@ app.get('/api/public-tasks', async (req, res) => {
     res.json(data);
 });
 
-// 1.1.1 Быстрый список заданий и наказаний для выбора родителя при создании усложнения
+// 1.1.1 Быстрый список только ИЗБРАННЫХ заданий для выбора родителя при создании усложнения
 app.get('/api/available-parents', async (req, res) => {
     const { data, error } = await supabase
         .from('tasks')
-        .select('id, text, type, likes_count')
-        .or('type.eq.task,type.eq.punishment,type.is.null')
+        .select('id, text, type, likes_count, is_favorite')
+        .eq('is_favorite', true)
+        .or('type.eq.task,type.is.null')
         .order('likes_count', { ascending: false })
         .limit(100);
 
@@ -495,6 +501,29 @@ app.get('/api/tasks', authMiddleware, async (req, res) => {
 
     if (error) return res.status(500).json({ error: error.message });
     res.json(data);
+});
+
+// 3.1 Переключение статуса "Избранное" у задания (только для админа)
+app.post('/api/admin/tasks/:id/toggle-favorite', authMiddleware, async (req, res) => {
+    const { id } = req.params;
+    const { data: task, error: fetchErr } = await supabase
+        .from('tasks')
+        .select('id, is_favorite')
+        .eq('id', id)
+        .single();
+
+    if (fetchErr || !task) return res.status(404).json({ error: 'Задание не найдено' });
+
+    const newFavoriteStatus = !task.is_favorite;
+    const { error: updateErr } = await supabase
+        .from('tasks')
+        .update({ is_favorite: newFavoriteStatus })
+        .eq('id', id);
+
+    if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+    broadcastFeedEvent('favorite_update', { id: Number(id), is_favorite: newFavoriteStatus });
+    res.json({ success: true, is_favorite: newFavoriteStatus });
 });
 
 // 4. Удаление задания (только для админа)

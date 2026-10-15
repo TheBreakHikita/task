@@ -541,6 +541,35 @@
             gap: 12px;
             contain: layout style;            /* Оптимизация рендеринга для браузера */
             will-change: transform;
+            transition: border-color 0.25s, box-shadow 0.25s;
+        }
+
+        /* Желтая подсветка карточек избранных заданий */
+        .feed-item.feed-item-favorite {
+            border: 1.5px solid #facc15 !important;
+            background: linear-gradient(180deg, rgba(234, 179, 8, 0.08) 0%, #0f172a 100%) !important;
+            box-shadow: 0 0 20px rgba(250, 204, 21, 0.18) !important;
+        }
+
+        .favorite-badge-label {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.8em;
+            color: #facc15;
+            font-weight: 700;
+            background: rgba(234, 179, 8, 0.15);
+            border: 1px solid rgba(250, 204, 21, 0.35);
+            padding: 3px 8px;
+            border-radius: 6px;
+            width: fit-content;
+        }
+
+        /* Заблокированная опция в выпадающем меню */
+        .sort-menu-item.disabled {
+            opacity: 0.35;
+            cursor: not-allowed !important;
+            pointer-events: none;
         }
 
         .feed-item-text {
@@ -745,6 +774,7 @@
                 <div class="sort-menu" id="sortMenu">
                     <button class="sort-menu-item active" id="sortOpt-top" onclick="selectFeedSort('top')">🔥 Лучшие</button>
                     <button class="sort-menu-item" id="sortOpt-new" onclick="selectFeedSort('new')">🕒 Свежие</button>
+                    <button class="sort-menu-item" id="sortOpt-favorite" onclick="selectFeedSort('favorite')">⭐ Избранные</button>
                 </div>
             </div>
 
@@ -1014,13 +1044,20 @@
 
         function selectFeedSort(sort) {
             document.getElementById('sortDropdownWrap').classList.remove('open');
+            // Защита: нельзя включить 'favorite', если выбраны наказания или усложнения
+            if (sort === 'favorite' && currentFeedType !== 'task') return;
             if (currentFeedSort === sort) return;
 
             currentFeedSort = sort;
-            document.getElementById('currentSortLabel').innerText = sort === 'top' ? '🔥 Лучшие' : '🕒 Свежие';
+            let label = '🔥 Лучшие';
+            if (sort === 'new') label = '🕒 Свежие';
+            else if (sort === 'favorite') label = '⭐ Избранные';
+
+            document.getElementById('currentSortLabel').innerText = label;
 
             document.getElementById('sortOpt-top').classList.toggle('active', sort === 'top');
             document.getElementById('sortOpt-new').classList.toggle('active', sort === 'new');
+            document.getElementById('sortOpt-favorite').classList.toggle('active', sort === 'favorite');
 
             // При смене сортировки плавно пересортировываем уже имеющийся массив без скелетона
             sortAndRenderFeed();
@@ -1044,9 +1081,15 @@
             const localVotes = getLocalActionIds('client_voted_tasks');
             const isVoted = task.hasVoted || localVotes.includes(task.id);
             const isReported = Boolean(task.hasReported);
+            const isFavorite = Boolean(task.is_favorite);
+            const isTaskTab = currentFeedType === 'task';
             const date = new Date(task.created_at).toLocaleString('ru-RU', {
                 day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
             });
+
+            // Избранные задания подсвечиваются желтым
+            const favoriteClass = (isTaskTab && isFavorite) ? ' feed-item-favorite' : '';
+            const favoriteBadge = (isTaskTab && isFavorite) ? '<div class="favorite-badge-label">⭐ Избранное</div>' : '';
 
             let parentBadgeHtml = '';
             if (task.parent_id) {
@@ -1063,7 +1106,8 @@
             }
 
             return `
-            <div class="feed-item" id="feed-item-${task.id}" data-id="${task.id}" data-likes="${task.likes_count || 0}" data-time="${new Date(task.created_at).getTime()}">
+            <div class="feed-item${favoriteClass}" id="feed-item-${task.id}" data-id="${task.id}" data-likes="${task.likes_count || 0}" data-time="${new Date(task.created_at).getTime()}">
+                ${favoriteBadge}
                 ${parentBadgeHtml}
                 <div class="feed-item-text">${escapeHtml(task.text)}</div>
                 <div class="feed-item-footer">
@@ -1083,9 +1127,12 @@
         }
 
         function sortAndRenderFeed() {
-            const list = feedCache[currentFeedType] || [];
+            let list = [...(feedCache[currentFeedType] || [])];
 
-            if (currentFeedSort === 'top') {
+            if (currentFeedType === 'task' && currentFeedSort === 'favorite') {
+                list = list.filter(item => Boolean(item.is_favorite));
+                list.sort((a, b) => (b.likes_count || 0) - (a.likes_count || 0) || new Date(b.created_at) - new Date(a.created_at));
+            } else if (currentFeedSort === 'top') {
                 list.sort((a, b) => (b.likes_count || 0) - (a.likes_count || 0) || new Date(b.created_at) - new Date(a.created_at));
             } else {
                 list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -1093,7 +1140,8 @@
 
             if (!list.length) {
                 let emptyText = 'Заданий пока нет 😴';
-                if (currentFeedType === 'punishment') emptyText = 'Наказаний пока нет 💀';
+                if (currentFeedType === 'task' && currentFeedSort === 'favorite') emptyText = 'Избранных заданий пока нет ⭐';
+                else if (currentFeedType === 'punishment') emptyText = 'Наказаний пока нет 💀';
                 else if (currentFeedType === 'modifier') emptyText = 'Усложнений пока нет ⚡';
                 feedList.innerHTML = `<div style="text-align: center; color: var(--text-muted); padding: 40px;">${emptyText}</div>`;
                 return;
@@ -1125,6 +1173,19 @@
             document.getElementById('feedTypeTaskBtn').classList.toggle('active', type === 'task');
             document.getElementById('feedTypePunishmentBtn').classList.toggle('active', type === 'punishment');
             document.getElementById('feedTypeModifierBtn').classList.toggle('active', type === 'modifier');
+
+            const favOpt = document.getElementById('sortOpt-favorite');
+            if (type !== 'task') {
+                // Отключаем возможность перейти на фильтрацию "Избранные"
+                if (favOpt) favOpt.classList.add('disabled');
+                if (currentFeedSort === 'favorite') {
+                    selectFeedSort('top');
+                    return;
+                }
+            } else {
+                // Для заданий включаем обратно
+                if (favOpt) favOpt.classList.remove('disabled');
+            }
 
             // Если список уже загружен в память — мгновенно показываем его БЕЗ запроса к серверу и БЕЗ скелетонов
             if (feedCache[currentFeedType]) {
@@ -1181,6 +1242,8 @@
                         updateButtonModeUI(payload.mode);
                     } else if (type === 'report_update') {
                         handleRealtimeReportUpdate(payload);
+                    } else if (type === 'favorite_update') {
+                        handleRealtimeFavoriteUpdate(payload);
                     } else if (type === 'task_deleted') {
                         handleRealtimeDelete(payload);
                     }
@@ -1312,6 +1375,24 @@
             if (countEl) countEl.innerText = reports_count > 0 ? reports_count : 'Пожаловаться';
         }
 
+        // Обработка переключения избранного администратором в реальном времени
+        function handleRealtimeFavoriteUpdate({ id, is_favorite }) {
+            ['task', 'punishment', 'modifier'].forEach(type => {
+                if (feedCache[type]) {
+                    const item = feedCache[type].find(t => t.id === id);
+                    if (item) item.is_favorite = is_favorite;
+                }
+            });
+
+            // Если открыто модальное окно усложнения, обновляем список доступных родителей
+            const parentSelect = document.getElementById('parentTaskSelect');
+            if (parentSelect && document.getElementById('modalOverlay').classList.contains('active')) {
+                loadAvailableParents();
+            }
+
+            sortAndRenderFeed();
+        }
+        
         // Обработка удаления задания админом
         function handleRealtimeDelete({ id }) {
             ['task', 'punishment', 'modifier'].forEach(type => {
@@ -1479,7 +1560,7 @@
                 const res = await fetch('/api/available-parents');
                 const list = await res.json();
                 if (!list.length) {
-                    select.innerHTML = '<option value="">(Пока нет заданий для выбора)</option>';
+                    select.innerHTML = '<option value="">(Пока нет избранных заданий для усложнения)</option>';
                     return;
                 }
                 select.innerHTML = '<option value="">-- Выберите задание или наказание --</option>' +

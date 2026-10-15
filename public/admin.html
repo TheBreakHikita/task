@@ -140,6 +140,26 @@
         }
         .btn-ban:hover { background: #eab308; color: #000; }
 
+        .btn-fav {
+            background: transparent;
+            border: 1px solid #eab308;
+            color: #facc15;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.85em;
+            transition: 0.2s;
+        }
+        .btn-fav.active {
+            background: #eab308;
+            color: #000;
+        }
+        .task-card.is-favorite-card {
+            border-color: #facc15;
+            box-shadow: 0 0 15px rgba(250, 204, 21, 0.2);
+        }
+
         .btn-dismiss {
             background: transparent;
             border: 1px solid #10b981;
@@ -717,8 +737,10 @@
 
             container.innerHTML = items.map(task => {
                 const date = new Date(task.created_at).toLocaleString('ru-RU');
+                const isTaskType = !task.type || task.type === 'task';
+                const isFav = Boolean(task.is_favorite);
                 return `
-                <div class="task-card" id="task-${task.id}">
+                <div class="task-card ${isFav ? 'is-favorite-card' : ''}" id="task-${task.id}">
                     <div class="task-text">${escapeHtml(task.text)}</div>
                     <div class="task-meta">
                         <div>
@@ -726,9 +748,11 @@
                             <span class="ip-badge" title="IP адрес отправителя">${escapeHtml(task.ip)}</span>
                             <span style="margin-left: 10px;">❤️ Лайков: <b>${task.likes_count || 0}</b></span>
                             ${task.reports_count > 0 ? `<span class="report-badge" style="margin-left: 8px;">⚠️ Жалоб: ${task.reports_count}</span>` : ''}
+                            ${isFav ? `<span style="margin-left: 8px; color: #facc15; font-weight: bold;">⭐ Избранное</span>` : ''}
                             <span style="margin-left: 10px;">🕒 ${date}</span>
                         </div>
                         <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            ${isTaskType ? `<button class="btn-fav ${isFav ? 'active' : ''}" onclick="toggleFavorite(${task.id})">${isFav ? '★ В избранном' : '☆ В избранное'}</button>` : ''}
                             ${task.reports_count > 0 ? `<button class="btn-dismiss" onclick="resetReports(${task.id})">Снять жалобы ✓</button>` : ''}
                             <button class="btn-ban" onclick="banIp('${escapeHtml(task.ip)}')">Бан по IP</button>
                             <button class="task-delete-btn" onclick="deleteTask(${task.id})">Удалить ✕</button>
@@ -817,6 +841,23 @@
             `;
         }
 
+        async function toggleFavorite(id) {
+            try {
+                const res = await fetch(`/api/admin/tasks/${id}/toggle-favorite`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${authToken}` }
+                });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    loadTasks();
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Не удалось обновить статус'));
+                }
+            } catch (e) {
+                alert('Ошибка соединения с сервером');
+            }
+        }
+        
         async function resetReports(id) {
             if (!confirm('Обнулить жалобы на это задание?')) return;
 

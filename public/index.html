@@ -721,23 +721,32 @@
         <span id="bigBtnText">Дать задание</span>
     </button>
     <script>
-        // Предотвращаем мигание кнопки при загрузке: мгновенно применяем сохраненный режим
+        // Предотвращаем мигание кнопки при загрузке: мгновенно применяем сохраненный режим и статус выключения
         (function() {
             try {
-                const saved = localStorage.getItem('cached_button_mode');
+                const savedMode = localStorage.getItem('cached_button_mode');
+                const savedEnabled = localStorage.getItem('cached_submissions_enabled');
                 const btn = document.getElementById('giveTaskBtn');
                 const emoji = document.getElementById('bigBtnEmoji');
                 const text = document.getElementById('bigBtnText');
-                if (!btn || !emoji || !text) return;
+                if (!btn) return;
 
-                if (saved === 'punishment') {
-                    btn.classList.add('punishment-mode');
-                    emoji.innerText = '💀';
-                    text.innerText = 'Дать наказание';
-                } else if (saved === 'modifier') {
-                    btn.classList.add('modifier-mode');
-                    emoji.innerText = '⚡';
-                    text.innerText = 'Усложнить';
+                // Если приём был выключен — сразу блокируем кнопку ДО отрисовки страницы
+                if (savedEnabled === 'false') {
+                    btn.classList.add('disabled');
+                    btn.title = 'Приём временно приостановлен';
+                }
+
+                if (emoji && text) {
+                    if (savedMode === 'punishment') {
+                        btn.classList.add('punishment-mode');
+                        emoji.innerText = '💀';
+                        text.innerText = 'Дать наказание';
+                    } else if (savedMode === 'modifier') {
+                        btn.classList.add('modifier-mode');
+                        emoji.innerText = '⚡';
+                        text.innerText = 'Усложнить';
+                    }
                 }
             } catch(e) {}
         })();
@@ -1525,11 +1534,14 @@
         }
 
         function updateSubmissionsUI(enabled) {
-            isSubmissionsEnabled = enabled;
+            isSubmissionsEnabled = Boolean(enabled);
+            // Сохраняем состояние в localStorage, чтобы при F5 кнопка не мигала
+            localStorage.setItem('cached_submissions_enabled', isSubmissionsEnabled ? 'true' : 'false');
+
             const btn = document.getElementById('giveTaskBtn');
             if (!btn) return;
 
-            if (enabled) {
+            if (isSubmissionsEnabled) {
                 btn.classList.remove('disabled');
                 btn.title = '';
             } else {
@@ -1560,7 +1572,7 @@
                 const res = await fetch('/api/available-parents');
                 const list = await res.json();
                 if (!list.length) {
-                    select.innerHTML = '<option value="">(Пока нет избранных заданий для усложнения)</option>';
+                    select.innerHTML = '<option value="">(Пока нет доступных заданий или наказаний)</option>';
                     return;
                 }
                 select.innerHTML = '<option value="">-- Выберите задание или наказание --</option>' +

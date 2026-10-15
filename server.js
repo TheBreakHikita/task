@@ -135,33 +135,42 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 // Сохранение и загрузка глобальных настроек из Supabase (чтобы не сбрасывались при засыпании сервера)
 async function saveSettings() {
     try {
-        await supabase.from('app_settings').upsert({
+        const payload = {
             key: 'main',
             value: {
                 submissionsEnabled,
                 buttonMode,
                 keepAliveConfig
             }
-        });
+        };
+        const { error } = await supabase.from('app_settings').upsert(payload, { onConflict: 'key' });
+        if (error) {
+            console.error('❌ Ошибка сохранения настроек в Supabase:', error.message);
+        } else {
+            console.log('💾 Настройки успешно сохранены в Supabase');
+        }
     } catch (e) {
-        console.error('Ошибка сохранения настроек в Supabase:', e.message);
+        console.error('❌ Исключение при сохранении настроек:', e.message);
     }
 }
 
 async function loadSettingsFromDb() {
     try {
-        const { data } = await supabase.from('app_settings').select('value').eq('key', 'main').maybeSingle();
+        const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'main').maybeSingle();
+        if (error) {
+            console.warn('⚠️ Ошибка при чтении настроек из Supabase:', error.message);
+            return;
+        }
         if (data && data.value) {
             if (typeof data.value.submissionsEnabled !== 'undefined') submissionsEnabled = data.value.submissionsEnabled;
             if (data.value.buttonMode) buttonMode = data.value.buttonMode;
             if (data.value.keepAliveConfig) keepAliveConfig = { ...keepAliveConfig, ...data.value.keepAliveConfig };
-            console.log('✅ Настройки админки успешно восстановлены из Supabase');
+            console.log('✅ Настройки админки успешно восстановлены из Supabase:', { submissionsEnabled, buttonMode });
         }
     } catch (e) {
-        console.warn('Не удалось загрузить настройки из БД (будут использованы дефолтные):', e.message);
+        console.warn('⚠️ Не удалось загрузить настройки из БД (будут использованы дефолтные):', e.message);
     }
 }
-loadSettingsFromDb();
 
 // Вспомогательная функция извлечения чистого IP
 function getClientIp(req) {
@@ -396,18 +405,25 @@ app.get('/api/public-tasks', async (req, res) => {
     res.json(data);
 });
 
-// 1.1.1 Быстрый список только ИЗБРАННЫХ заданий для выбора родителя при создании усложнения
+// 1.1.1 Список для выбора при усложнении: наказания (все) + задания (только избранные)
 app.get('/api/available-parents', async (req, res) => {
     const { data, error } = await supabase
         .from('tasks')
         .select('id, text, type, likes_count, is_favorite')
-        .eq('is_favorite', true)
-        .or('type.eq.task,type.is.null')
+        .or('type.eq.punishment,is_favorite.eq.true')
         .order('likes_count', { ascending: false })
         .limit(100);
 
     if (error) return res.status(500).json({ error: error.message });
-    res.json(data || []);
+
+    // Оставляем все наказания, а из обычных заданий пропускаем только избранные
+    const filtered = (data || []).filter(item => {
+        if (item.type === 'punishment') return true;
+        if ((!item.type || item.type === 'task') && item.is_favorite) return true;
+        return false;
+    });
+
+    res.json(filtered);
 });
 
 // 2. Вход для админа
@@ -625,4 +641,8 @@ app.post('/api/admin/keepalive', authMiddleware, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Сервер запущен на порту ${PORT}`));
+// Загружаем настройки из БД ДО того, как сервер начнёт принимать запросы
+(async () => {
+    await loadSettingsFromDb();
+    app.listen(PORT, () => console.log(`🚀 Сервер запущен на порту ${PORT}`));
+})();

@@ -215,7 +215,26 @@ app.post('/api/tasks', async (req, res) => {
         });
     }
 
-    const parsedParentId = parent_id ? Number(parent_id) : null;
+    let parsedParentId = parent_id ? Number(parent_id) : null;
+
+    // Если создается усложнение и родитель не выбран вручную — выбираем случайный
+    if (taskType === 'modifier' && !parsedParentId) {
+        try {
+            const { data: randomCandidates } = await supabase
+                .from('tasks')
+                .select('id')
+                .or('type.eq.punishment,is_favorite.eq.true')
+                .limit(50);
+
+            if (randomCandidates && randomCandidates.length > 0) {
+                const randomItem = randomCandidates[Math.floor(Math.random() * randomCandidates.length)];
+                parsedParentId = randomItem.id;
+            }
+        } catch (e) {
+            console.warn('Не удалось выбрать случайного родителя:', e.message);
+        }
+    }
+
     const { data: inserted, error } = await supabase.from('tasks').insert([
         { text: text.trim(), ip: ip, likes_count: 0, reports_count: 0, type: taskType, parent_id: parsedParentId }
     ]).select().single();

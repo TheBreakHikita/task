@@ -626,6 +626,47 @@
             color: #f43f5e;
         }
 
+        /* Микро-анимация клика по лайку */
+        .vote-btn:active span:first-child {
+            transform: scale(1.45);
+        }
+        .vote-btn span:first-child {
+            display: inline-block;
+            transition: transform 0.18s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .vote-btn.bump span:first-child {
+            animation: heartBeat 0.35s ease;
+        }
+        @keyframes heartBeat {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.4); }
+            100% { transform: scale(1); }
+        }
+
+        /* Быстрое всплывающее уведомление */
+        .quick-toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid #38bdf8;
+            color: #f8fafc;
+            padding: 8px 18px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.4);
+            pointer-events: none;
+            opacity: 0;
+            transition: all 0.25s ease;
+            z-index: 999;
+        }
+        .quick-toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
         /* Кнопка пожаловаться */
         .report-btn {
             background: rgba(30, 41, 59, 0.7);
@@ -716,6 +757,8 @@
 
     <!-- Большая кнопка по центру -->
     <div id="floatingContainer"></div>
+    <!-- Элемент для быстрых тостов -->
+    <div id="quickToast" class="quick-toast"></div>
     <button class="big-btn" id="giveTaskBtn" onclick="openModal()">
         <span id="bigBtnEmoji" style="font-size: 2.2rem; line-height: 1;">🐸</span>
         <span id="bigBtnText">Дать задание</span>
@@ -803,7 +846,7 @@
                     🎯 К какому заданию или наказанию дать усложнение?
                 </label>
                 <select id="parentTaskSelect">
-                    <option value="">-- Выберите задание или наказание --</option>
+                    <option value="">🎲 Выбери или рандом</option>
                 </select>
             </div>
 
@@ -1423,56 +1466,110 @@
         // Запускаем подключение SSE сразу при загрузке страницы
         initRealtimeFeed();
 
+        // Вспомогательная функция для быстрых уведомлений
+        let toastTimeout = null;
+        function showQuickToast(text) {
+            const toast = document.getElementById('quickToast');
+            if (!toast) return;
+            toast.innerText = text;
+            toast.classList.add('show');
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+
+        // МГНОВЕННЫЙ (ОПТИМИСТИЧНЫЙ) ОТКЛИК НА ЛАЙК
         async function toggleVote(taskId) {
             const btn = document.getElementById(`vote-btn-${taskId}`);
             const countEl = document.getElementById(`vote-count-${taskId}`);
+            if (!btn || !countEl) return;
 
+            // 1. Считываем текущее состояние
+            const localVotes = getLocalActionIds('client_voted_tasks');
+            const wasVoted = btn.classList.contains('active') || localVotes.includes(taskId);
+            const currentCount = parseInt(countEl.innerText || '0', 10);
+            const newCount = wasVoted ? Math.max(0, currentCount - 1) : currentCount + 1;
+
+            // 2. Мгновенно применяем изменения в UI (0мс задержки)
+            btn.classList.toggle('active', !wasVoted);
+            btn.classList.remove('bump');
+            void btn.offsetWidth; // перезапуск анимации
+            btn.classList.add('bump');
+            countEl.innerText = newCount;
+
+            if (!wasVoted) {
+                addLocalActionId('client_voted_tasks', taskId);
+            } else {
+                removeLocalActionId('client_voted_tasks', taskId);
+            }
+
+            // Мгновенно двигаем карточку в списке
+            handleRealtimeVoteUpdate({ id: taskId, likes_count: newCount });
+
+            // 3. Отправляем запрос на сервер в фоне
             try {
                 const res = await fetch(`/api/tasks/${taskId}/vote`, { method: 'POST' });
                 const data = await res.json();
 
-                if (res.ok && data.success) {
-                    countEl.innerText = data.likes_count;
-                    if (data.hasVoted) {
-                        btn.classList.add('active');
-                        addLocalActionId('client_voted_tasks', taskId);
-                    } else {
-                        btn.classList.remove('active');
-                        removeLocalActionId('client_voted_tasks', taskId);
-                    }
-                    // Мгновенно пересортировываем задание на клиенте (вверх при лайке или вниз при снятии)
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || 'Ошибка сервера');
+                }
+
+                // Синхронизируем точное число с сервера при необходимости
+                if (data.likes_count !== newCount) {
                     handleRealtimeVoteUpdate({ id: taskId, likes_count: data.likes_count });
                 }
             } catch (err) {
-                console.error('Ошибка при голосовании', err);
+                console.error('Ошибка сохранения голоса на сервере, откат изменений:', err);
+                // Откатываем UI обратно в случае сетевой ошибки
+                btn.classList.toggle('active', wasVoted);
+                countEl.innerText = currentCount;
+                if (wasVoted) addLocalActionId('client_voted_tasks', taskId);
+                else removeLocalActionId('client_voted_tasks', taskId);
+                handleRealtimeVoteUpdate({ id: taskId, likes_count: currentCount });
+                showQuickToast('⚠️ Не удалось сохранить голос');
             }
         }
 
+        // МГНОВЕННЫЙ ОТКЛИК НА ЖАЛОБУ
         async function reportTask(taskId) {
             const btn = document.getElementById(`report-btn-${taskId}`);
             const countEl = document.getElementById(`report-count-${taskId}`);
 
-            if (btn.classList.contains('active')) {
-                alert('Вы уже пожаловались на это задание!');
+            if (btn && btn.classList.contains('active')) {
+                showQuickToast('⚠️ Вы уже отправили жалобу');
                 return;
             }
 
-            if (!confirm('Вы действительно хотите пожаловаться на это задание?')) return;
+            // 1. Мгновенный отклик в интерфейсе
+            if (btn) btn.classList.add('active');
+            let prevCountText = 'Пожаловаться';
+            if (countEl) {
+                prevCountText = countEl.innerText;
+                const prevNum = parseInt(prevCountText, 10);
+                countEl.innerText = isNaN(prevNum) ? '1' : (prevNum + 1);
+            }
+            addLocalActionId('client_reported_tasks', taskId);
+            showQuickToast('⚠️ Жалоба отправлена администратору');
 
+            // 2. Отправка в фоне
             try {
                 const res = await fetch(`/api/tasks/${taskId}/report`, { method: 'POST' });
                 const data = await res.json();
 
-                if (res.ok && data.success) {
-                    btn.classList.add('active');
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || 'Ошибка при отправке');
+                }
+                if (countEl && data.reports_count) {
                     countEl.innerText = data.reports_count;
-                    addLocalActionId('client_reported_tasks', taskId);
-                    alert('Жалоба отправлена администратору');
-                } else {
-                    alert(data.error || 'Ошибка при отправке жалобы');
                 }
             } catch (err) {
-                alert('Ошибка соединения');
+                console.error('Ошибка отправки жалобы:', err);
+                if (btn) btn.classList.remove('active');
+                if (countEl) countEl.innerText = prevCountText;
+                removeLocalActionId('client_reported_tasks', taskId);
+                showQuickToast('❌ ' + (err.message || 'Ошибка соединения'));
             }
         }
         
@@ -1567,22 +1664,22 @@
         async function loadAvailableParents() {
             const select = document.getElementById('parentTaskSelect');
             if (!select) return;
-            select.innerHTML = '<option value="">⏳ Загрузка заданий...</option>';
+            select.innerHTML = '<option value="">🎲 Выбери или рандом (загрузка...)</option>';
             try {
                 const res = await fetch('/api/available-parents');
                 const list = await res.json();
                 if (!list.length) {
-                    select.innerHTML = '<option value="">(Пока нет доступных заданий или наказаний)</option>';
+                    select.innerHTML = '<option value="">🎲 Выбери или рандом</option>';
                     return;
                 }
-                select.innerHTML = '<option value="">-- Выберите задание или наказание --</option>' +
+                select.innerHTML = '<option value="">🎲 Выбери или рандом</option>' +
                     list.map(item => {
                         const icon = item.type === 'punishment' ? '💀' : '🐸';
                         const text = item.text.length > 60 ? item.text.slice(0, 60) + '...' : item.text;
                         return `<option value="${item.id}">${icon} [❤️ ${item.likes_count || 0}] ${escapeHtml(text)}</option>`;
                     }).join('');
             } catch(e) {
-                select.innerHTML = '<option value="">(Ошибка загрузки списка)</option>';
+                select.innerHTML = '<option value="">🎲 Выбери или рандом</option>';
             }
         }
 
@@ -1641,15 +1738,6 @@
 
             const parentSelect = document.getElementById('parentTaskSelect');
             const parentId = (currentMode === 'modifier' && parentSelect) ? parentSelect.value : null;
-
-            if (currentMode === 'modifier' && !parentId) {
-                statusMsg.style.display = 'block';
-                statusMsg.style.color = '#ef4444';
-                statusMsg.innerText = '⚠️ Пожалуйста, выберите задание или наказание из списка выше!';
-                submitBtn.disabled = false;
-                submitBtn.innerText = 'Отправить 🚀';
-                return;
-            }
 
             try {
                 const res = await fetch('/api/tasks', {

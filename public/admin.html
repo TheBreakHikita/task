@@ -490,9 +490,14 @@
                     },
                     body: JSON.stringify({ mode })
                 });
-                if (!res.ok) alert('Ошибка переключения режима');
+                const data = await res.json();
+                if (!res.ok) {
+                    alert('Ошибка: ' + (data.error || 'Ошибка переключения режима'));
+                    loadButtonMode();
+                }
             } catch (e) {
                 alert('Ошибка соединения с сервером');
+                loadButtonMode();
             }
         }
 
@@ -504,7 +509,7 @@
                 });
                 if (!res.ok) return;
                 const data = await res.json();
-                document.getElementById('submissionsToggle').checked = data.enabled;
+                document.getElementById('submissionsToggle').checked = Boolean(data.enabled);
                 document.getElementById('submissionsStatusText').innerText = data.enabled ? 'Вкл' : 'Выкл';
             } catch (e) {
                 console.error(e);
@@ -513,6 +518,7 @@
 
         async function toggleSubmissions(enabled) {
             const statusEl = document.getElementById('submissionsStatusText');
+            const toggleInput = document.getElementById('submissionsToggle');
             statusEl.innerText = 'Сохранение...';
             try {
                 const res = await fetch('/api/admin/submissions-toggle', {
@@ -523,12 +529,17 @@
                     },
                     body: JSON.stringify({ enabled })
                 });
-                if (res.ok) {
+                const data = await res.json();
+                if (res.ok && data.success) {
                     statusEl.innerText = enabled ? 'Вкл' : 'Выкл';
                 } else {
-                    alert('Ошибка при изменении статуса приёма заданий');
+                    toggleInput.checked = !enabled;
+                    statusEl.innerText = !enabled ? 'Вкл' : 'Выкл';
+                    alert('Ошибка: ' + (data.error || 'Ошибка при изменении статуса приёма заданий'));
                 }
             } catch (e) {
+                toggleInput.checked = !enabled;
+                statusEl.innerText = !enabled ? 'Вкл' : 'Выкл';
                 alert('Ошибка связи с сервером');
             }
         }

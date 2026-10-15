@@ -135,7 +135,7 @@ app.get('/api/submissions-status', (req, res) => {
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Сохранение и загрузка глобальных настроек из Supabase (чтобы не сбрасывались при засыпании сервера)
+// Сохранение и загрузка глобальных настроек из Supabase (с контролем успешности и повторными попытками)
 async function saveSettings() {
     try {
         const payload = {
@@ -144,34 +144,48 @@ async function saveSettings() {
                 submissionsEnabled,
                 buttonMode,
                 keepAliveConfig
-            }
+            },
+            updated_at: new Date().toISOString()
         };
         const { error } = await supabase.from('app_settings').upsert(payload, { onConflict: 'key' });
         if (error) {
             console.error('❌ Ошибка сохранения настроек в Supabase:', error.message);
-        } else {
-            console.log('💾 Настройки успешно сохранены в Supabase');
+            return false;
         }
+        console.log('💾 Настройки успешно сохранены в Supabase:', { submissionsEnabled, buttonMode });
+        return true;
     } catch (e) {
         console.error('❌ Исключение при сохранении настроек:', e.message);
+        return false;
     }
 }
 
-async function loadSettingsFromDb() {
-    try {
-        const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'main').maybeSingle();
-        if (error) {
-            console.warn('⚠️ Ошибка при чтении настроек из Supabase:', error.message);
+async function loadSettingsFromDb(retries = 3) {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+        try {
+            const { data, error } = await supabase.from('app_settings').select('value').eq('key', 'main').maybeSingle();
+            if (error) {
+                console.warn(`⚠️ [Попытка ${attempt}/${retries}] Ошибка чтения настроек из Supabase:`, error.message);
+                if (attempt < retries) {
+                    await new Promise(res => setTimeout(res, 1000));
+                    continue;
+                }
+                return;
+            }
+            if (data && data.value) {
+                if (typeof data.value.submissionsEnabled !== 'undefined') submissionsEnabled = Boolean(data.value.submissionsEnabled);
+                if (data.value.buttonMode) buttonMode = data.value.buttonMode;
+                if (data.value.keepAliveConfig) keepAliveConfig = { ...keepAliveConfig, ...data.value.keepAliveConfig };
+                console.log('✅ Настройки админки успешно восстановлены из Supabase:', { submissionsEnabled, buttonMode });
+            } else {
+                console.log('ℹ️ Настройки в Supabase еще не созданы. Выполняем первичную запись...');
+                await saveSettings();
+            }
             return;
+        } catch (e) {
+            console.warn(`⚠️ [Попытка ${attempt}/${retries}] Исключение при загрузке настроек:`, e.message);
+            if (attempt < retries) await new Promise(res => setTimeout(res, 1000));
         }
-        if (data && data.value) {
-            if (typeof data.value.submissionsEnabled !== 'undefined') submissionsEnabled = data.value.submissionsEnabled;
-            if (data.value.buttonMode) buttonMode = data.value.buttonMode;
-            if (data.value.keepAliveConfig) keepAliveConfig = { ...keepAliveConfig, ...data.value.keepAliveConfig };
-            console.log('✅ Настройки админки успешно восстановлены из Supabase:', { submissionsEnabled, buttonMode });
-        }
-    } catch (e) {
-        console.warn('⚠️ Не удалось загрузить настройки из БД (будут использованы дефолтные):', e.message);
     }
 }
 
@@ -557,7 +571,10 @@ app.post('/api/admin/mode', authMiddleware, async (req, res) => {
     const { mode } = req.body;
     if (mode === 'task' || mode === 'punishment' || mode === 'modifier') {
         buttonMode = mode;
-        await saveSettings();
+        const saved = await saveSettings();
+        if (!saved) {
+            return res.status(500).json({ error: 'Не удалось сохранить режим в базе Supabase' });
+        }
         broadcastFeedEvent('mode_toggle', { mode: buttonMode });
     }
     res.json({ success: true, mode: buttonMode });
@@ -572,7 +589,10 @@ app.post('/api/admin/submissions-toggle', authMiddleware, async (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled !== 'undefined') {
         submissionsEnabled = Boolean(enabled);
-        await saveSettings();
+        const saved = await saveSettings();
+        if (!saved) {
+            return res.status(500).json({ error: 'Не удалось сохранить статус кнопки в базе Supabase' });
+        }
         broadcastFeedEvent('submissions_toggle', { enabled: submissionsEnabled });
     }
     res.json({ success: true, enabled: submissionsEnabled });

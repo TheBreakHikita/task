@@ -135,6 +135,8 @@ app.get('/api/submissions-status', (req, res) => {
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+let lastSettingsError = null;
+
 // Сохранение и загрузка глобальных настроек из Supabase (с контролем успешности и повторными попытками)
 async function saveSettings() {
     try {
@@ -149,13 +151,16 @@ async function saveSettings() {
         };
         const { error } = await supabase.from('app_settings').upsert(payload, { onConflict: 'key' });
         if (error) {
-            console.error('❌ Ошибка сохранения настроек в Supabase:', error.message);
+            console.error('❌ Ошибка сохранения настроек в Supabase:', error);
+            lastSettingsError = `${error.message} (код: ${error.code || 'нет'}, details: ${error.details || 'нет'})`;
             return false;
         }
+        lastSettingsError = null;
         console.log('💾 Настройки успешно сохранены в Supabase:', { submissionsEnabled, buttonMode });
         return true;
     } catch (e) {
-        console.error('❌ Исключение при сохранении настроек:', e.message);
+        console.error('❌ Исключение при сохранении настроек:', e);
+        lastSettingsError = e.message;
         return false;
     }
 }
@@ -588,10 +593,14 @@ app.get('/api/admin/submissions-status', authMiddleware, (req, res) => {
 app.post('/api/admin/submissions-toggle', authMiddleware, async (req, res) => {
     const { enabled } = req.body;
     if (typeof enabled !== 'undefined') {
+        const prevStatus = submissionsEnabled;
         submissionsEnabled = Boolean(enabled);
         const saved = await saveSettings();
         if (!saved) {
-            return res.status(500).json({ error: 'Не удалось сохранить статус кнопки в базе Supabase' });
+            submissionsEnabled = prevStatus;
+            return res.status(500).json({ 
+                error: `Ошибка базы: ${lastSettingsError || 'Неизвестная ошибка'}` 
+            });
         }
         broadcastFeedEvent('submissions_toggle', { enabled: submissionsEnabled });
     }

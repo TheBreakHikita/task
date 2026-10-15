@@ -84,13 +84,16 @@ async function pingSelf() {
 
 // Запуск пинга каждые 10 минут (600 000 мс)
 setInterval(pingSelf, 10 * 60 * 1000);
-const TASK_COOLDOWN_MS = 60 * 1000; // Задержка 1 минута
+const MAX_ATTEMPTS = 2;              // Максимальный запас попыток
+const SOFT_COOLDOWN_MS = 15 * 1000;  // Мягкая пауза между попытками (15 секунд)
+const HARD_COOLDOWN_MS = 60 * 1000;  // Жесткий кулдаун (1 минута)
 
 // Периодическая очистка устаревших записей из памяти (каждые 5 минут)
 setInterval(() => {
     const now = Date.now();
-    for (const [ip, lastTime] of taskRateLimitMap.entries()) {
-        if (now - lastTime > TASK_COOLDOWN_MS) {
+    for (const [ip, data] of taskRateLimitMap.entries()) {
+        const isExpired = (now - data.lastSentTime > HARD_COOLDOWN_MS) && (!data.blockedUntil || now > data.blockedUntil);
+        if (isExpired) {
             taskRateLimitMap.delete(ip);
         }
     }
@@ -204,15 +207,49 @@ app.post('/api/tasks', async (req, res) => {
         return res.status(403).json({ error: 'Ваш IP находится в чёрном списке' });
     }
 
-    // Проверка лимита по IP (кулдаун 1 минута)
+    // Проверка лимита и попыток по IP
     const now = Date.now();
-    const lastSentTime = taskRateLimitMap.get(ip);
-    if (lastSentTime && now - lastSentTime < TASK_COOLDOWN_MS) {
-        const timeLeftSec = Math.ceil((TASK_COOLDOWN_MS - (now - lastSentTime)) / 1000);
+    let rateData = taskRateLimitMap.get(ip);
+
+    // Сброс баланса до 2 попыток, если кулдаун закончился
+    if (rateData) {
+        if (rateData.blockedUntil && now >= rateData.blockedUntil) {
+            rateData = null;
+            taskRateLimitMap.delete(ip);
+        } else if (now - rateData.lastSentTime >= HARD_COOLDOWN_MS) {
+            rateData = null;
+            taskRateLimitMap.delete(ip);
+        }
+    }
+
+    if (!rateData) {
+        rateData = { attempts: MAX_ATTEMPTS, lastSentTime: 0, blockedUntil: 0 };
+    }
+
+    // 1. Проверка жесткого кулдауна
+    if (rateData.blockedUntil && rateData.blockedUntil > now) {
+        const timeLeftSec = Math.ceil((rateData.blockedUntil - now) / 1000);
         return res.status(429).json({
-            error: `Подождите ещё ${timeLeftSec} сек. перед отправкой следующего задания.`,
+            error: `Попытки исчерпаны. Подождите ещё ${timeLeftSec} сек.`,
             retryAfter: timeLeftSec
         });
+    }
+
+    // 2. Проверка мягкой паузы (15 секунд между 1-й и 2-й попыткой)
+    if (rateData.attempts < MAX_ATTEMPTS) {
+        const elapsed = now - rateData.lastSentTime;
+        if (elapsed < SOFT_COOLDOWN_MS) {
+            // Нарушение спам-фильтра: обнуляем баланс и активируем жесткий бан на 1 минуту
+            rateData.attempts = 0;
+            rateData.blockedUntil = now + HARD_COOLDOWN_MS;
+            taskRateLimitMap.set(ip, rateData);
+
+            const penaltySec = Math.ceil(HARD_COOLDOWN_MS / 1000);
+            return res.status(429).json({
+                error: `Слишком частая отправка! Блокировка на ${penaltySec} сек.`,
+                retryAfter: penaltySec
+            });
+        }
     }
 
     let parsedParentId = parent_id ? Number(parent_id) : null;
@@ -250,8 +287,17 @@ app.post('/api/tasks', async (req, res) => {
         parentData = p || null;
     }
 
+    // Списываем 1 попытку
+    rateData.attempts -= 1;
+    rateData.lastSentTime = Date.now();
+
+    // Если потрачены обе попытки — включаем жесткий кулдаун на 1 минуту
+    if (rateData.attempts <= 0) {
+        rateData.blockedUntil = rateData.lastSentTime + HARD_COOLDOWN_MS;
+    }
+    taskRateLimitMap.set(ip, rateData);
+
     // Оповещаем всех подключенных пользователей о новом задании
-    taskRateLimitMap.set(ip, Date.now());
     broadcastFeedEvent('new_task', {
         id: inserted.id,
         text: inserted.text,
@@ -263,7 +309,12 @@ app.post('/api/tasks', async (req, res) => {
         parent: parentData
     });
 
-    res.json({ success: true, task: inserted });
+    res.json({ 
+        success: true, 
+        task: inserted, 
+        attemptsLeft: rateData.attempts,
+        blockedUntil: rateData.blockedUntil
+    });
 });
 
 // Real-time поток событий для ленты (Server-Sent Events)

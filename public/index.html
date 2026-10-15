@@ -1704,17 +1704,33 @@
             if (e.target === modalOverlay) closeModal();
         }
 
-        // Проверка локального кулдауна в браузере (1 минута)
+        // Проверка баланса попыток и задержек в браузере
         function checkBrowserCooldown() {
-            const lastSent = parseInt(localStorage.getItem('last_task_sent_time') || '0', 10);
             const now = Date.now();
-            const elapsed = now - lastSent;
-            const cooldown = 60 * 1000;
-
-            if (elapsed < cooldown) {
-                return Math.ceil((cooldown - elapsed) / 1000);
+            const blockedUntil = parseInt(localStorage.getItem('task_blocked_until') || '0', 10);
+            
+            // Если включен жесткий кулдаун
+            if (blockedUntil > now) {
+                return { blocked: true, waitSec: Math.ceil((blockedUntil - now) / 1000), reason: 'hard' };
             }
-            return 0;
+
+            const lastSent = parseInt(localStorage.getItem('last_task_sent_time') || '0', 10);
+            let attempts = parseInt(localStorage.getItem('task_attempts_left') ?? '2', 10);
+
+            // Если прошло более 60 секунд — восстанавливаем баланс до 2 попыток
+            if (now - lastSent >= 60 * 1000) {
+                attempts = 2;
+                localStorage.setItem('task_attempts_left', '2');
+                localStorage.removeItem('task_blocked_until');
+            }
+
+            // Если осталась 1 попытка, проверяем мягкую паузу 15 секунд
+            if (attempts === 1 && (now - lastSent < 15 * 1000)) {
+                const waitSec = Math.ceil((15 * 1000 - (now - lastSent)) / 1000);
+                return { blocked: true, waitSec, reason: 'soft' };
+            }
+
+            return { blocked: false, waitSec: 0, attempts };
         }
 
         async function sendTask() {
@@ -1725,11 +1741,15 @@
             }
 
             // Проверка по браузеру перед отправкой запроса
-            const browserWait = checkBrowserCooldown();
-            if (browserWait > 0) {
+            const cooldown = checkBrowserCooldown();
+            if (cooldown.blocked) {
                 statusMsg.style.display = 'block';
                 statusMsg.style.color = '#ef4444';
-                statusMsg.innerText = `⏳ Вы можете отправить следующее задание через ${browserWait} сек.`;
+                if (cooldown.reason === 'soft') {
+                    statusMsg.innerText = `⏳ Мягкая пауза: подождите ещё ${cooldown.waitSec} сек. перед 2-й попыткой.`;
+                } else {
+                    statusMsg.innerText = `⏳ Лимит исчерпан. Подождите ещё ${cooldown.waitSec} сек.`;
+                }
                 return;
             }
 
@@ -1755,8 +1775,14 @@
                     if (currentMode === 'punishment') successText = '✅ Наказание отправлено блогеру!';
                     else if (currentMode === 'modifier') successText = '⚡ Усложнение прикреплено и отправлено!';
                     statusMsg.innerText = successText;
+                    const attemptsLeft = typeof data.attemptsLeft !== 'undefined' ? data.attemptsLeft : 0;
+                    localStorage.setItem('task_attempts_left', attemptsLeft.toString());
                     localStorage.setItem('last_task_sent_time', Date.now().toString());
-                    
+
+                    if (attemptsLeft <= 0 || data.blockedUntil) {
+                        localStorage.setItem('task_blocked_until', (data.blockedUntil || Date.now() + 60 * 1000).toString());
+                    }
+
                     // Сразу добавляем новое задание в общий пул и в начало очереди
                     backgroundTasks.unshift(text);
                     taskQueue.unshift(text);
@@ -1774,7 +1800,13 @@
             } catch (err) {
                 statusMsg.style.display = 'block';
                 statusMsg.style.color = '#ef4444';
-                statusMsg.innerText = '❌ Ошибка: ' + err.message;
+                statusMsg.innerText = '❌ ' + err.message;
+
+                // При получении кулдауна или спам-штрафа синхронизируем локальный блок
+                if (data && data.retryAfter) {
+                    localStorage.setItem('task_attempts_left', '0');
+                    localStorage.setItem('task_blocked_until', (Date.now() + data.retryAfter * 1000).toString());
+                }
             } finally {
                 submitBtn.disabled = false;
                 submitBtn.innerText = 'Отправить 🚀';
